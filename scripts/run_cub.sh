@@ -3,22 +3,6 @@
 set -e
 set -x
 
-LAST_VIT_ARGS=()
-if [ "${USE_LAST_VIT:-1}" = "0" ]; then
-    LAST_VIT_ARGS+=(--no_last_vit)
-else
-    LAST_VIT_ARGS+=(--use_last_vit)
-fi
-if [ -n "${LAST_VIT_TOPK:-}" ]; then
-    LAST_VIT_ARGS+=(--last_vit_topk "${LAST_VIT_TOPK}")
-fi
-if [ -n "${LAST_VIT_SIGMA:-}" ]; then
-    LAST_VIT_ARGS+=(--last_vit_sigma "${LAST_VIT_SIGMA}")
-fi
-if [ -n "${LAST_VIT_EPS:-}" ]; then
-    LAST_VIT_ARGS+=(--last_vit_eps "${LAST_VIT_EPS}")
-fi
-
 CUDA_VISIBLE_DEVICES=0 python train.py \
     --dataset_name 'cub' \
     --batch_size 128 \
@@ -36,4 +20,6 @@ CUDA_VISIBLE_DEVICES=0 python train.py \
     --warmup_teacher_temp_epochs 30 \
     --memax_weight 2 \
     --exp_name cub_simgcd \
-    "${LAST_VIT_ARGS[@]}"
+    --use_last_vit \
+    --last_vit_topk 1 \
+    --last_vit_eps 1e-6
