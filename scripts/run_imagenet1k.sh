@@ -3,6 +3,22 @@
 set -e
 set -x
 
+LAST_VIT_ARGS=()
+if [ "${USE_LAST_VIT:-1}" = "0" ]; then
+    LAST_VIT_ARGS+=(--no_last_vit)
+else
+    LAST_VIT_ARGS+=(--use_last_vit)
+fi
+if [ -n "${LAST_VIT_TOPK:-}" ]; then
+    LAST_VIT_ARGS+=(--last_vit_topk "${LAST_VIT_TOPK}")
+fi
+if [ -n "${LAST_VIT_SIGMA:-}" ]; then
+    LAST_VIT_ARGS+=(--last_vit_sigma "${LAST_VIT_SIGMA}")
+fi
+if [ -n "${LAST_VIT_EPS:-}" ]; then
+    LAST_VIT_ARGS+=(--last_vit_eps "${LAST_VIT_EPS}")
+fi
+
 CUDA_VISIBLE_DEVICES=0,1,2,3,4,5,6,7 torchrun --master_port 12348 --nproc_per_node=8 train_mp.py \
     --dataset_name 'imagenet_1k' \
     --batch_size 128 \
@@ -20,4 +36,5 @@ CUDA_VISIBLE_DEVICES=0,1,2,3,4,5,6,7 torchrun --master_port 12348 --nproc_per_no
     --warmup_teacher_temp_epochs 30 \
     --memax_weight 1 \
     --exp_name imagenet1k_simgcd \
-    --print_freq 100
+    --print_freq 100 \
+    "${LAST_VIT_ARGS[@]}"

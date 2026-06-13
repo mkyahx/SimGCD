@@ -3,6 +3,60 @@ import torch.nn as nn
 import torch.nn.functional as F
 import numpy as np
 
+
+class LASTViTBackboneWrapper(nn.Module):
+    def __init__(self, backbone, use_last_vit=True, topk=1, sigma=None, eps=1e-6):
+        super().__init__()
+        self.backbone = backbone
+        self.use_last_vit = use_last_vit
+        self.topk = topk
+        self.sigma = sigma
+        self.eps = eps
+        self.cached_kernel = None
+        self.cached_kernel_meta = None
+
+    def gaussian_kernel_1d(self, kernel_size, sigma, device, dtype):
+        offsets = torch.arange(
+            -kernel_size // 2 + 1,
+            kernel_size // 2 + 1,
+            device=device,
+            dtype=dtype,
+        )
+        kernel = torch.exp(-0.5 * (offsets / sigma) ** 2)
+        kernel = kernel / torch.max(kernel)
+        return kernel.view(1, 1, kernel_size)
+
+    def get_gaussian_kernel(self, feat_dim, device, dtype):
+        sigma = self.sigma if self.sigma is not None else feat_dim ** 0.5
+        meta = (feat_dim, float(sigma), device, dtype)
+        if self.cached_kernel is None or self.cached_kernel_meta != meta:
+            self.cached_kernel = self.gaussian_kernel_1d(feat_dim, sigma, device, dtype)
+            self.cached_kernel_meta = meta
+        return self.cached_kernel
+
+    def forward(self, x):
+        if not self.use_last_vit:
+            return self.backbone(x)
+
+        tokens = self.backbone.get_intermediate_layers(x, n=1)[0]
+        patch_tokens = tokens[:, 1:]
+        patch_tokens_float = patch_tokens.float()
+        feat_dim = patch_tokens_float.shape[-1]
+        topk = max(1, min(self.topk, patch_tokens_float.shape[1]))
+
+        kernel = self.get_gaussian_kernel(feat_dim, patch_tokens_float.device, patch_tokens_float.dtype)
+        filtered = torch.fft.fft(patch_tokens_float, dim=-1)
+        filtered = torch.fft.fftshift(filtered, dim=-1)
+        filtered = filtered * kernel
+        filtered = torch.fft.ifftshift(filtered, dim=-1)
+        filtered = torch.fft.ifft(filtered, dim=-1).real
+
+        scores = patch_tokens_float / (torch.abs(filtered - patch_tokens_float) + self.eps)
+        _, indices = torch.topk(scores, k=topk, dim=1, largest=True)
+        selected_patches = torch.gather(patch_tokens, 1, indices)
+        return torch.mean(selected_patches, dim=1)
+
+
 class DINOHead(nn.Module):
     def __init__(self, in_dim, out_dim, use_bn=False, norm_last_layer=True, 
                  nlayers=3, hidden_dim=2048, bottleneck_dim=256):

@@ -14,7 +14,8 @@ from data.get_datasets import get_datasets, get_class_splits
 from util.general_utils import AverageMeter, init_experiment
 from util.cluster_and_log_utils import log_accs_from_preds
 from config import exp_root
-from model import DINOHead, info_nce_logits, SupConLoss, DistillLoss, ContrastiveLearningViewGenerator, get_params_groups
+from model import DINOHead, info_nce_logits, SupConLoss, DistillLoss, ContrastiveLearningViewGenerator, \
+    LASTViTBackboneWrapper, get_params_groups
 
 
 def train(student, train_loader, test_loader, unlabelled_train_loader, args):
@@ -194,6 +195,16 @@ if __name__ == "__main__":
     parser.add_argument('--transform', type=str, default='imagenet')
     parser.add_argument('--sup_weight', type=float, default=0.35)
     parser.add_argument('--n_views', default=2, type=int)
+    parser.add_argument('--use_last_vit', action='store_true', default=True,
+                        help='Use LAST-ViT token selection instead of the DINO CLS token.')
+    parser.add_argument('--no_last_vit', action='store_false', dest='use_last_vit',
+                        help='Disable LAST-ViT and use the original DINO CLS token.')
+    parser.add_argument('--last_vit_topk', default=1, type=int,
+                        help='Number of selected patch tokens to average in LAST-ViT.')
+    parser.add_argument('--last_vit_sigma', default=None, type=float,
+                        help='Gaussian sigma for LAST-ViT. Defaults to sqrt(feat_dim).')
+    parser.add_argument('--last_vit_eps', default=1e-6, type=float,
+                        help='Numerical epsilon used in LAST-ViT patch scoring.')
     
     parser.add_argument('--memax_weight', type=float, default=2)
     parser.add_argument('--warmup_teacher_temp', default=0.07, type=float, help='Initial value for the teacher temperature.')
@@ -250,8 +261,18 @@ if __name__ == "__main__":
             if block_num >= args.grad_from_block:
                 m.requires_grad = True
 
+    backbone = LASTViTBackboneWrapper(
+        backbone,
+        use_last_vit=args.use_last_vit,
+        topk=args.last_vit_topk,
+        sigma=args.last_vit_sigma,
+        eps=args.last_vit_eps,
+    )
     
-    args.logger.info('model build')
+    last_vit_sigma = args.last_vit_sigma if args.last_vit_sigma is not None else args.feat_dim ** 0.5
+    args.logger.info(
+        f'model build | LAST-ViT: {args.use_last_vit} | topk: {args.last_vit_topk} | sigma: {last_vit_sigma:.6f}'
+    )
 
     # --------------------
     # CONTRASTIVE TRANSFORM
