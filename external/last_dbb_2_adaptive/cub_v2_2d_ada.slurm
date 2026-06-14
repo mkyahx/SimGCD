@@ -14,6 +14,10 @@
 source ~/anaconda3/etc/profile.d/conda.sh
 conda activate cpt
 
+TRAIN_SEED=0
+export PYTHONHASHSEED="${TRAIN_SEED}"
+export CUBLAS_WORKSPACE_CONFIG=:4096:8
+
 python train_last_dbb_2_adaptive.py \
     --backbone_repo 'facebookresearch/dinov2' \
     --backbone_name 'dinov2_vitb14' \
@@ -36,6 +40,8 @@ python train_last_dbb_2_adaptive.py \
     --sf_adaptive_k 1.0 \
     --sf_topk 4 \
     --sf_vote_topk 4 \
+    --seed "${TRAIN_SEED}" \
+    --deterministic \
     --exp_name cub_simgcd_dinov2_2d_ada
 
 conda deactivate

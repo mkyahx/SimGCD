@@ -1,8 +1,10 @@
 import argparse
 import os
+import random
 import tempfile
 import time
 
+import numpy as np
 import torch
 import torch.nn as nn
 from torch.utils.data import DataLoader
@@ -14,6 +16,32 @@ from model import ContrastiveLearningViewGenerator, DINOHead
 from model_last_dbb_2_adaptive import LASTDBB2AdaptiveBackbone
 from train import train
 from util.general_utils import init_experiment
+
+
+def set_random_seed(seed, deterministic=False):
+    os.environ["PYTHONHASHSEED"] = str(seed)
+    if deterministic:
+        os.environ.setdefault("CUBLAS_WORKSPACE_CONFIG", ":4096:8")
+
+    random.seed(seed)
+    np.random.seed(seed)
+    torch.manual_seed(seed)
+    if torch.cuda.is_available():
+        torch.cuda.manual_seed(seed)
+        torch.cuda.manual_seed_all(seed)
+
+    if deterministic:
+        torch.backends.cudnn.benchmark = False
+        torch.backends.cudnn.deterministic = True
+        torch.backends.cudnn.allow_tf32 = False
+        torch.backends.cuda.matmul.allow_tf32 = False
+        torch.use_deterministic_algorithms(True)
+
+
+def seed_worker(worker_id):
+    worker_seed = torch.initial_seed() % 2**32
+    np.random.seed(worker_seed)
+    random.seed(worker_seed)
 
 
 def ensure_runtime_tmpdir(args):
@@ -129,6 +157,13 @@ if __name__ == "__main__":
     parser.add_argument("--pin_memory", default=0, type=int)
     parser.add_argument("--persistent_workers", default=0, type=int)
     parser.add_argument("--mp_sharing_strategy", default="file_system", type=str)
+    parser.add_argument("--seed", type=int, default=0, help="Set to enable reproducible training.")
+    parser.add_argument("--no_seed", action="store_const", const=None, dest="seed",
+                        help="Disable explicit random seeding.")
+    parser.add_argument("--deterministic", action="store_true", default=True,
+                        help="Use deterministic CUDA/PyTorch behavior when --seed is set.")
+    parser.add_argument("--no_deterministic", action="store_false", dest="deterministic",
+                        help="Allow non-deterministic CUDA/PyTorch behavior.")
 
     parser.add_argument("--backbone_repo", default="facebookresearch/dino:main", type=str)
     parser.add_argument("--backbone_name", default="dino_vitb16", type=str)
@@ -145,6 +180,8 @@ if __name__ == "__main__":
     parser.add_argument("--last_token_source", default="patch", choices=["patch", "all"])
 
     args = parser.parse_args()
+    if args.seed is not None:
+        set_random_seed(args.seed, deterministic=args.deterministic)
     device = torch.device("cuda:0")
     args = get_class_splits(args)
 
@@ -155,7 +192,7 @@ if __name__ == "__main__":
     ensure_runtime_tmpdir(args)
     args.logger.info(f"Using evaluation function {args.eval_funcs[0]} to print results")
 
-    torch.backends.cudnn.benchmark = True
+    torch.backends.cudnn.benchmark = args.seed is None or not args.deterministic
 
     args.interpolation = 3
     args.crop_pct = 0.875
@@ -195,7 +232,15 @@ if __name__ == "__main__":
     unlabelled_len = len(train_dataset.unlabelled_dataset)
     sample_weights = [1 if i < label_len else label_len / unlabelled_len for i in range(len(train_dataset))]
     sample_weights = torch.DoubleTensor(sample_weights)
-    sampler = torch.utils.data.WeightedRandomSampler(sample_weights, num_samples=len(train_dataset))
+    loader_generator = None
+    if args.seed is not None:
+        loader_generator = torch.Generator()
+        loader_generator.manual_seed(args.seed)
+    sampler = torch.utils.data.WeightedRandomSampler(
+        sample_weights,
+        num_samples=len(train_dataset),
+        generator=loader_generator,
+    )
 
     train_loader = DataLoader(
         train_dataset,
@@ -203,12 +248,16 @@ if __name__ == "__main__":
         shuffle=False,
         sampler=sampler,
         drop_last=True,
+        worker_init_fn=seed_worker if args.seed is not None else None,
+        generator=loader_generator,
         **make_loader_kwargs(args),
     )
     test_loader_unlabelled = DataLoader(
         unlabelled_train_examples_test,
         batch_size=256,
         shuffle=False,
+        worker_init_fn=seed_worker if args.seed is not None else None,
+        generator=loader_generator,
         **make_loader_kwargs(args, pin_memory=False, persistent_workers=False),
     )
 
