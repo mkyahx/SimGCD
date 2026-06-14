@@ -21,6 +21,7 @@ CUDA_VISIBLE_DEVICES=0,1,2,3,4,5,6,7 torchrun --master_port 12348 --nproc_per_no
     --memax_weight 1 \
     --exp_name imagenet1k_simgcd \
     --print_freq 100 \
-    --use_last_vit \
-    --last_vit_topk 1 \
+    --last_vit_mode fusion \
+    --last_vit_alpha 0.1 \
+    --last_vit_topk_ratio 0.5 \
     --last_vit_eps 1e-6

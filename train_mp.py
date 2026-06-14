@@ -42,12 +42,18 @@ def get_parser():
     parser.add_argument('--transform', type=str, default='imagenet')
     parser.add_argument('--sup_weight', type=float, default=0.35)
     parser.add_argument('--n_views', default=2, type=int)
-    parser.add_argument('--use_last_vit', action='store_true', default=True,
-                        help='Use LAST-ViT token selection instead of the DINO CLS token.')
-    parser.add_argument('--no_last_vit', action='store_false', dest='use_last_vit',
-                        help='Disable LAST-ViT and use the original DINO CLS token.')
-    parser.add_argument('--last_vit_topk', default=1, type=int,
-                        help='Number of selected patch tokens to average in LAST-ViT.')
+    parser.add_argument('--last_vit_mode', choices=['cls', 'replace', 'fusion'], default='fusion',
+                        help='How to use LAST-ViT features: original CLS, replacement, or CLS fusion.')
+    parser.add_argument('--use_last_vit', action='store_const', const='replace', dest='last_vit_mode',
+                        help='Deprecated alias for --last_vit_mode replace.')
+    parser.add_argument('--no_last_vit', action='store_const', const='cls', dest='last_vit_mode',
+                        help='Deprecated alias for --last_vit_mode cls.')
+    parser.add_argument('--last_vit_alpha', default=0.1, type=float,
+                        help='Fusion weight for LAST-ViT features when --last_vit_mode fusion is used.')
+    parser.add_argument('--last_vit_topk', default=None, type=int,
+                        help='Fixed number of selected patch tokens. Overrides --last_vit_topk_ratio when set.')
+    parser.add_argument('--last_vit_topk_ratio', default=0.5, type=float,
+                        help='Ratio of patch tokens selected by LAST-ViT when --last_vit_topk is not set.')
     parser.add_argument('--last_vit_sigma', default=None, type=float,
                         help='Gaussian sigma for LAST-ViT. Defaults to sqrt(feat_dim).')
     parser.add_argument('--last_vit_eps', default=1e-6, type=float,
@@ -112,8 +118,10 @@ def main(args):
 
     backbone = LASTViTBackboneWrapper(
         backbone,
-        use_last_vit=args.use_last_vit,
+        mode=args.last_vit_mode,
+        alpha=args.last_vit_alpha,
         topk=args.last_vit_topk,
+        topk_ratio=args.last_vit_topk_ratio,
         sigma=args.last_vit_sigma,
         eps=args.last_vit_eps,
     )
@@ -121,7 +129,8 @@ def main(args):
     if dist.get_rank() == 0:
         last_vit_sigma = args.last_vit_sigma if args.last_vit_sigma is not None else args.feat_dim ** 0.5
         args.logger.info(
-            f'model build | LAST-ViT: {args.use_last_vit} | topk: {args.last_vit_topk} | sigma: {last_vit_sigma:.6f}'
+            f'model build | LAST-ViT mode: {args.last_vit_mode} | alpha: {args.last_vit_alpha} | '
+            f'topk: {args.last_vit_topk} | topk_ratio: {args.last_vit_topk_ratio} | sigma: {last_vit_sigma:.6f}'
         )
 
     # --------------------

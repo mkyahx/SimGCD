@@ -5,11 +5,13 @@ import numpy as np
 
 
 class LASTViTBackboneWrapper(nn.Module):
-    def __init__(self, backbone, use_last_vit=True, topk=1, sigma=None, eps=1e-6):
+    def __init__(self, backbone, mode='fusion', alpha=0.1, topk=None, topk_ratio=0.5, sigma=None, eps=1e-6):
         super().__init__()
         self.backbone = backbone
-        self.use_last_vit = use_last_vit
+        self.mode = mode
+        self.alpha = alpha
         self.topk = topk
+        self.topk_ratio = topk_ratio
         self.sigma = sigma
         self.eps = eps
         self.cached_kernel = None
@@ -35,14 +37,21 @@ class LASTViTBackboneWrapper(nn.Module):
         return self.cached_kernel
 
     def forward(self, x):
-        if not self.use_last_vit:
+        if self.mode == 'cls':
             return self.backbone(x)
+        if self.mode not in {'replace', 'fusion'}:
+            raise ValueError(f'Unknown LAST-ViT mode: {self.mode}')
 
         tokens = self.backbone.get_intermediate_layers(x, n=1)[0]
+        cls_token = tokens[:, 0]
         patch_tokens = tokens[:, 1:]
         patch_tokens_float = patch_tokens.float()
         feat_dim = patch_tokens_float.shape[-1]
-        topk = max(1, min(self.topk, patch_tokens_float.shape[1]))
+        num_patches = patch_tokens_float.shape[1]
+        topk = self.topk
+        if topk is None:
+            topk = int(round(num_patches * self.topk_ratio))
+        topk = max(1, min(topk, num_patches))
 
         kernel = self.get_gaussian_kernel(feat_dim, patch_tokens_float.device, patch_tokens_float.dtype)
         filtered = torch.fft.fft(patch_tokens_float, dim=-1)
@@ -54,7 +63,11 @@ class LASTViTBackboneWrapper(nn.Module):
         scores = patch_tokens_float / (torch.abs(filtered - patch_tokens_float) + self.eps)
         _, indices = torch.topk(scores, k=topk, dim=1, largest=True)
         selected_patches = torch.gather(patch_tokens, 1, indices)
-        return torch.mean(selected_patches, dim=1)
+        last_token = torch.mean(selected_patches, dim=1)
+
+        if self.mode == 'replace':
+            return last_token
+        return (1 - self.alpha) * cls_token + self.alpha * last_token
 
 
 class DINOHead(nn.Module):

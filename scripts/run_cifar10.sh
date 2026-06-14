@@ -20,6 +20,7 @@ CUDA_VISIBLE_DEVICES=0 python train.py \
     --warmup_teacher_temp_epochs 30 \
     --memax_weight 1 \
     --exp_name cifar10_simgcd \
-    --use_last_vit \
-    --last_vit_topk 1 \
+    --last_vit_mode fusion \
+    --last_vit_alpha 0.1 \
+    --last_vit_topk_ratio 0.5 \
     --last_vit_eps 1e-6
