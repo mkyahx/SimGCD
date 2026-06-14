@@ -3,6 +3,10 @@
 set -e
 set -x
 
+TRAIN_SEED=0
+export PYTHONHASHSEED="${TRAIN_SEED}"
+export CUBLAS_WORKSPACE_CONFIG=:4096:8
+
 CUDA_VISIBLE_DEVICES=0 python train.py \
     --dataset_name 'cifar100' \
     --batch_size 128 \
@@ -23,4 +27,6 @@ CUDA_VISIBLE_DEVICES=0 python train.py \
     --last_vit_mode fusion \
     --last_vit_alpha 0.1 \
     --last_vit_topk_ratio 0.5 \
-    --last_vit_eps 1e-6
+    --last_vit_eps 1e-6 \
+    --seed "${TRAIN_SEED}" \
+    --deterministic
