@@ -1,6 +1,4 @@
 import argparse
-import os
-import random
 
 import math
 import numpy as np
@@ -16,34 +14,7 @@ from data.get_datasets import get_datasets, get_class_splits
 from util.general_utils import AverageMeter, init_experiment
 from util.cluster_and_log_utils import log_accs_from_preds
 from config import exp_root
-from model import DINOHead, info_nce_logits, SupConLoss, DistillLoss, ContrastiveLearningViewGenerator, \
-    LASTViTBackboneWrapper, get_params_groups
-
-
-def set_random_seed(seed, deterministic=False):
-    os.environ["PYTHONHASHSEED"] = str(seed)
-    if deterministic:
-        os.environ.setdefault("CUBLAS_WORKSPACE_CONFIG", ":4096:8")
-
-    random.seed(seed)
-    np.random.seed(seed)
-    torch.manual_seed(seed)
-    if torch.cuda.is_available():
-        torch.cuda.manual_seed(seed)
-        torch.cuda.manual_seed_all(seed)
-
-    if deterministic:
-        torch.backends.cudnn.benchmark = False
-        torch.backends.cudnn.deterministic = True
-        torch.backends.cudnn.allow_tf32 = False
-        torch.backends.cuda.matmul.allow_tf32 = False
-        torch.use_deterministic_algorithms(True)
-
-
-def seed_worker(worker_id):
-    worker_seed = torch.initial_seed() % 2**32
-    np.random.seed(worker_seed)
-    random.seed(worker_seed)
+from model import DINOHead, info_nce_logits, SupConLoss, DistillLoss, ContrastiveLearningViewGenerator, get_params_groups
 
 
 def train(student, train_loader, test_loader, unlabelled_train_loader, args):
@@ -223,22 +194,6 @@ if __name__ == "__main__":
     parser.add_argument('--transform', type=str, default='imagenet')
     parser.add_argument('--sup_weight', type=float, default=0.35)
     parser.add_argument('--n_views', default=2, type=int)
-    parser.add_argument('--last_vit_mode', choices=['cls', 'replace', 'fusion'], default='fusion',
-                        help='How to use LAST-ViT features: original CLS, replacement, or CLS fusion.')
-    parser.add_argument('--use_last_vit', action='store_const', const='replace', dest='last_vit_mode',
-                        help='Deprecated alias for --last_vit_mode replace.')
-    parser.add_argument('--no_last_vit', action='store_const', const='cls', dest='last_vit_mode',
-                        help='Deprecated alias for --last_vit_mode cls.')
-    parser.add_argument('--last_vit_alpha', default=0.1, type=float,
-                        help='Fusion weight for LAST-ViT features when --last_vit_mode fusion is used.')
-    parser.add_argument('--last_vit_topk', default=None, type=int,
-                        help='Fixed number of selected patch tokens. Overrides --last_vit_topk_ratio when set.')
-    parser.add_argument('--last_vit_topk_ratio', default=0.5, type=float,
-                        help='Ratio of patch tokens selected by LAST-ViT when --last_vit_topk is not set.')
-    parser.add_argument('--last_vit_sigma', default=None, type=float,
-                        help='Gaussian sigma for LAST-ViT. Defaults to sqrt(feat_dim).')
-    parser.add_argument('--last_vit_eps', default=1e-6, type=float,
-                        help='Numerical epsilon used in LAST-ViT patch scoring.')
     
     parser.add_argument('--memax_weight', type=float, default=2)
     parser.add_argument('--warmup_teacher_temp', default=0.07, type=float, help='Initial value for the teacher temperature.')
@@ -248,20 +203,11 @@ if __name__ == "__main__":
     parser.add_argument('--fp16', action='store_true', default=False)
     parser.add_argument('--print_freq', default=10, type=int)
     parser.add_argument('--exp_name', default=None, type=str)
-    parser.add_argument('--seed', type=int, default=0, help='Set to enable reproducible training.')
-    parser.add_argument('--no_seed', action='store_const', const=None, dest='seed',
-                        help='Disable explicit random seeding.')
-    parser.add_argument('--deterministic', action='store_true', default=True,
-                        help='Use deterministic CUDA/PyTorch behavior when --seed is set.')
-    parser.add_argument('--no_deterministic', action='store_false', dest='deterministic',
-                        help='Allow non-deterministic CUDA/PyTorch behavior.')
 
     # ----------------------
     # INIT
     # ----------------------
     args = parser.parse_args()
-    if args.seed is not None:
-        set_random_seed(args.seed, deterministic=args.deterministic)
     device = torch.device('cuda:0')
     args = get_class_splits(args)
 
@@ -271,7 +217,7 @@ if __name__ == "__main__":
     init_experiment(args, runner_name=['simgcd'])
     args.logger.info(f'Using evaluation function {args.eval_funcs[0]} to print results')
     
-    torch.backends.cudnn.benchmark = args.seed is None or not args.deterministic
+    torch.backends.cudnn.benchmark = True
 
     # ----------------------
     # BASE MODEL
@@ -304,21 +250,8 @@ if __name__ == "__main__":
             if block_num >= args.grad_from_block:
                 m.requires_grad = True
 
-    backbone = LASTViTBackboneWrapper(
-        backbone,
-        mode=args.last_vit_mode,
-        alpha=args.last_vit_alpha,
-        topk=args.last_vit_topk,
-        topk_ratio=args.last_vit_topk_ratio,
-        sigma=args.last_vit_sigma,
-        eps=args.last_vit_eps,
-    )
     
-    last_vit_sigma = args.last_vit_sigma if args.last_vit_sigma is not None else args.feat_dim ** 0.5
-    args.logger.info(
-        f'model build | LAST-ViT mode: {args.last_vit_mode} | alpha: {args.last_vit_alpha} | '
-        f'topk: {args.last_vit_topk} | topk_ratio: {args.last_vit_topk_ratio} | sigma: {last_vit_sigma:.6f}'
-    )
+    args.logger.info('model build')
 
     # --------------------
     # CONTRASTIVE TRANSFORM
@@ -341,27 +274,15 @@ if __name__ == "__main__":
     unlabelled_len = len(train_dataset.unlabelled_dataset)
     sample_weights = [1 if i < label_len else label_len / unlabelled_len for i in range(len(train_dataset))]
     sample_weights = torch.DoubleTensor(sample_weights)
-    loader_generator = None
-    if args.seed is not None:
-        loader_generator = torch.Generator()
-        loader_generator.manual_seed(args.seed)
-    sampler = torch.utils.data.WeightedRandomSampler(
-        sample_weights,
-        num_samples=len(train_dataset),
-        generator=loader_generator,
-    )
+    sampler = torch.utils.data.WeightedRandomSampler(sample_weights, num_samples=len(train_dataset))
 
     # --------------------
     # DATALOADERS
     # --------------------
     train_loader = DataLoader(train_dataset, num_workers=args.num_workers, batch_size=args.batch_size, shuffle=False,
-                              sampler=sampler, drop_last=True, pin_memory=True,
-                              worker_init_fn=seed_worker if args.seed is not None else None,
-                              generator=loader_generator)
+                              sampler=sampler, drop_last=True, pin_memory=True)
     test_loader_unlabelled = DataLoader(unlabelled_train_examples_test, num_workers=args.num_workers,
-                                        batch_size=256, shuffle=False, pin_memory=False,
-                                        worker_init_fn=seed_worker if args.seed is not None else None,
-                                        generator=loader_generator)
+                                        batch_size=256, shuffle=False, pin_memory=False)
     # test_loader_labelled = DataLoader(test_dataset, num_workers=args.num_workers,
     #                                   batch_size=256, shuffle=False, pin_memory=False)
 
