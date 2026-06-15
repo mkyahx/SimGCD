@@ -3,6 +3,10 @@
 set -e
 set -x
 
+TRAIN_SEED=0
+export PYTHONHASHSEED="${TRAIN_SEED}"
+export CUBLAS_WORKSPACE_CONFIG=:4096:8
+
 CUDA_VISIBLE_DEVICES=0 python train.py \
     --dataset_name 'aircraft' \
     --batch_size 128 \
@@ -19,4 +23,6 @@ CUDA_VISIBLE_DEVICES=0 python train.py \
     --teacher_temp 0.04 \
     --warmup_teacher_temp_epochs 30 \
     --memax_weight 1 \
-    --exp_name aircraft_simgcd
+    --exp_name aircraft_simgcd \
+    --seed "${TRAIN_SEED}" \
+    --deterministic

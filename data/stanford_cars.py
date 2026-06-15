@@ -117,7 +117,7 @@ def get_scars_datasets(train_transform, test_transform, train_classes=range(160)
 
     # Get labelled training set which has subsampled classes, then subsample some indices from that
     train_dataset_labelled = subsample_classes(deepcopy(whole_training_set), include_classes=train_classes)
-    subsample_indices = subsample_instances(train_dataset_labelled, prop_indices_to_subsample=prop_train_labels)
+    subsample_indices = subsample_instances(train_dataset_labelled, prop_indices_to_subsample=prop_train_labels, seed=seed)
     train_dataset_labelled = subsample_dataset(train_dataset_labelled, subsample_indices)
 
     # Split into training and validation sets

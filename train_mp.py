@@ -1,5 +1,6 @@
 import argparse
 import os
+import random
 
 import math
 import numpy as np
@@ -17,6 +18,32 @@ from util.general_utils import AverageMeter, init_experiment, DistributedWeighte
 from util.cluster_and_log_utils import log_accs_from_preds
 from config import exp_root
 from model import DINOHead, info_nce_logits, SupConLoss, DistillLoss, ContrastiveLearningViewGenerator, get_params_groups
+
+
+def set_random_seed(seed, deterministic=False):
+    os.environ["PYTHONHASHSEED"] = str(seed)
+    if deterministic:
+        os.environ.setdefault("CUBLAS_WORKSPACE_CONFIG", ":4096:8")
+
+    random.seed(seed)
+    np.random.seed(seed)
+    torch.manual_seed(seed)
+    if torch.cuda.is_available():
+        torch.cuda.manual_seed(seed)
+        torch.cuda.manual_seed_all(seed)
+
+    if deterministic:
+        torch.backends.cudnn.benchmark = False
+        torch.backends.cudnn.deterministic = True
+        torch.backends.cudnn.allow_tf32 = False
+        torch.backends.cuda.matmul.allow_tf32 = False
+        torch.use_deterministic_algorithms(True)
+
+
+def seed_worker(worker_id):
+    worker_seed = torch.initial_seed() % 2**32
+    np.random.seed(worker_seed)
+    random.seed(worker_seed)
 
 
 def get_parser():
@@ -50,6 +77,13 @@ def get_parser():
     parser.add_argument('--fp16', action='store_true', default=False)
     parser.add_argument('--print_freq', default=10, type=int)
     parser.add_argument('--exp_name', default=None, type=str)
+    parser.add_argument('--seed', type=int, default=0, help='Set to enable reproducible training.')
+    parser.add_argument('--no_seed', action='store_const', const=None, dest='seed',
+                        help='Disable explicit random seeding.')
+    parser.add_argument('--deterministic', action='store_true', default=True,
+                        help='Use deterministic CUDA/PyTorch behavior when --seed is set.')
+    parser.add_argument('--no_deterministic', action='store_false', dest='deterministic',
+                        help='Allow non-deterministic CUDA/PyTorch behavior.')
 
     # ----------------------
     # INIT
@@ -123,16 +157,32 @@ def main(args):
     unlabelled_len = len(train_dataset.unlabelled_dataset)
     sample_weights = [1 if i < label_len else label_len / unlabelled_len for i in range(len(train_dataset))]
     sample_weights = torch.DoubleTensor(sample_weights)
-    train_sampler = DistributedWeightedSampler(train_dataset, sample_weights, num_samples=len(train_dataset))
-    unlabelled_train_sampler = torch.utils.data.distributed.DistributedSampler(unlabelled_train_examples_test)
+    loader_generator = None
+    if args.seed is not None:
+        loader_generator = torch.Generator()
+        loader_generator.manual_seed(args.seed)
+    train_sampler = DistributedWeightedSampler(
+        train_dataset,
+        sample_weights,
+        num_samples=len(train_dataset),
+        generator=loader_generator,
+    )
+    unlabelled_train_sampler = torch.utils.data.distributed.DistributedSampler(
+        unlabelled_train_examples_test,
+        seed=0 if args.seed is None else args.seed,
+    )
     # test_sampler = torch.utils.data.distributed.DistributedSampler(test_dataset)
     # --------------------
     # DATALOADERS
     # --------------------
     train_loader = DataLoader(train_dataset, num_workers=args.num_workers, batch_size=args.batch_size, shuffle=False,
-                              sampler=train_sampler, drop_last=True, pin_memory=True)
+                              sampler=train_sampler, drop_last=True, pin_memory=True,
+                              worker_init_fn=seed_worker if args.seed is not None else None,
+                              generator=loader_generator)
     unlabelled_train_loader = DataLoader(unlabelled_train_examples_test, num_workers=args.num_workers, batch_size=256, 
-                                        shuffle=False, sampler=unlabelled_train_sampler, pin_memory=False)
+                                        shuffle=False, sampler=unlabelled_train_sampler, pin_memory=False,
+                                        worker_init_fn=seed_worker if args.seed is not None else None,
+                                        generator=loader_generator)
     # test_loader = DataLoader(test_dataset, num_workers=args.num_workers, batch_size=256, 
     #                                   shuffle=False, sampler=test_sampler, pin_memory=False)
 
@@ -313,10 +363,12 @@ def test(model, test_loader, epoch, save_name, args):
 
 if __name__ == '__main__':
     args = get_parser()
+    if args.seed is not None:
+        set_random_seed(args.seed, deterministic=args.deterministic)
     
     torch.cuda.set_device(args.local_rank)
     torch.distributed.init_process_group(backend='nccl', init_method='env://')
-    cudnn.benchmark = True
+    cudnn.benchmark = args.seed is None or not args.deterministic
 
     if dist.get_rank() == 0:
         init_experiment(args, runner_name=['simgcd'])
