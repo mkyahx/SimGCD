@@ -1,24 +1,30 @@
 #!/bin/bash
 #SBATCH --job-name=simgcd
-#SBATCH --partition=visualai
+#SBATCH --partition=gpu
+#SBATCH --account=stat_han
 #SBATCH --nodes=1
 #SBATCH --ntasks-per-node=1
 #SBATCH --cpus-per-task=8
 #SBATCH --gres=gpu:1
-#SBATCH --mem=128G
-#SBATCH --time=24:00:00
-#SBATCH --output=./logs/simgcd_cub_v2_2d_ada_%j.out
-#SBATCH --error=./logs/simgcd_cub_v2_2d_ada_%j.err
+#SBATCH --mem=48G
+#SBATCH --time=6:00:00
+#SBATCH --mail-type=BEGIN,END,FAIL
+#SBATCH --mail-user=mkyahx@connect.hku.hk
+#SBATCH --output=~/logs/simgcd_cub_v2_2d_ada_%j.out
+#SBATCH --error=~/logs/simgcd_cub_v2_2d_ada_%j.err
 
 
-source ~/anaconda3/etc/profile.d/conda.sh
-conda activate cpt
+set -e
+set -x
 
+source /home/mkyahx/miniconda3/etc/profile.d/conda.sh
+conda activate simgcd
+cd /home/mkyahx/SimGCD/
 TRAIN_SEED=0
 export PYTHONHASHSEED="${TRAIN_SEED}"
 export CUBLAS_WORKSPACE_CONFIG=:4096:8
 
-python train_last_dbb_2_adaptive.py \
+python /home/mkyahx/SimGCD/train_last_dbb_2_adaptive.py \
     --backbone_repo 'facebookresearch/dinov2' \
     --backbone_name 'dinov2_vitb14' \
     --dataset_name 'cub' \
@@ -46,3 +52,7 @@ python train_last_dbb_2_adaptive.py \
 
 conda deactivate
 echo "Finish"
+
+    # --backbone_repo 'facebookresearch/dino:main' \
+    # --backbone_name 'dino_vitb16' \
+    # --backbone_weights '/home/mkyahx/.cache/torch/hub/checkpoints/dino_vitbase16_pretrain.pth' \

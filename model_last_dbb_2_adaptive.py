@@ -177,8 +177,9 @@ class LASTDBB2AdaptiveBackbone(nn.Module):
 
         radius = self.radial_grid(grid_h, grid_w, device=fmap.device, dtype=fmap.dtype)
         mask = self.gaussian_mask(amplitude, radius).to(dtype=amplitude.dtype)
-
-        filtered_spectrum = torch.polar(amplitude * mask, phase)
+        hi_mask = 1- mask
+    
+        filtered_spectrum = torch.polar(amplitude * hi_mask, phase)
         filtered_spectrum = torch.fft.ifftshift(filtered_spectrum, dim=(-2, -1))
         filtered = torch.fft.ifft2(filtered_spectrum, dim=(-2, -1), norm="ortho").real
         return filtered.permute(0, 2, 3, 1).reshape(batch_size, num_patches, channels)
