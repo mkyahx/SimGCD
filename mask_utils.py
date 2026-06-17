@@ -2,7 +2,9 @@ import os
 
 import numpy as np
 import torch
-import torch.nn.functional as F
+from torchvision import transforms
+from torchvision.transforms import InterpolationMode
+from torchvision.transforms import functional as TF
 from torch.utils.data import Dataset
 
 from data.data_utils import MergedDataset
@@ -52,13 +54,23 @@ def mask_path_from_image_path(image_path, image_root, mask_root):
 
 
 class MaskedDataset(Dataset):
-    def __init__(self, dataset, mask_root, image_root=None, mask_size=224, threshold=0.5, missing="error"):
+    def __init__(
+        self,
+        dataset,
+        mask_root,
+        image_root=None,
+        mask_size=224,
+        threshold=0.5,
+        missing="error",
+        transform=None,
+    ):
         self.dataset = dataset
         self.mask_root = os.path.abspath(os.path.expanduser(mask_root))
         self.image_root = os.path.abspath(os.path.expanduser(image_root)) if image_root else infer_image_root(dataset)
         self.mask_size = int(mask_size)
         self.threshold = float(threshold)
         self.missing = missing
+        self.transform = transform
 
     def __len__(self):
         return len(self.dataset)
@@ -82,19 +94,70 @@ class MaskedDataset(Dataset):
         mask = torch.as_tensor(mask, dtype=torch.float32)
         if mask.ndim != 2:
             raise ValueError(f"Expected 2D mask at {mask_path}, got shape {tuple(mask.shape)}")
-        mask = (mask > self.threshold).float()
-        mask = F.interpolate(
-            mask.view(1, 1, *mask.shape),
-            size=(self.mask_size, self.mask_size),
-            mode="nearest",
-        ).view(self.mask_size, self.mask_size)
-        return mask
+        return (mask > self.threshold).float()
 
     def __getitem__(self, index):
         item = self.dataset[index]
         image, target, uq_idx = item
         mask = self._load_mask(index)
+        if self.transform is not None:
+            image, mask = self.transform(image, mask)
         return (image, mask), target, uq_idx
+
+
+class PairedImagenetTransform:
+    def __init__(self, image_size, interpolation, crop_pct, train=True):
+        self.image_size = int(image_size)
+        self.resize_size = int(image_size / crop_pct)
+        interpolation_map = {
+            0: InterpolationMode.NEAREST,
+            2: InterpolationMode.BILINEAR,
+            3: InterpolationMode.BICUBIC,
+        }
+        self.interpolation = interpolation_map.get(interpolation, interpolation)
+        self.train = train
+        self.color_jitter = transforms.ColorJitter()
+        self.mean = torch.tensor((0.485, 0.456, 0.406))
+        self.std = torch.tensor((0.229, 0.224, 0.225))
+
+    def _resize(self, image, mask):
+        image = TF.resize(image, self.resize_size, interpolation=self.interpolation)
+        mask = TF.resize(mask.unsqueeze(0), self.resize_size, interpolation=InterpolationMode.NEAREST).squeeze(0)
+        return image, mask
+
+    def _to_tensor(self, image, mask):
+        image = TF.to_tensor(image)
+        image = TF.normalize(image, self.mean, self.std)
+        return image, (mask > 0.5).float()
+
+    def __call__(self, image, mask):
+        image, mask = self._resize(image, mask)
+        if self.train:
+            i, j, h, w = transforms.RandomCrop.get_params(image, (self.image_size, self.image_size))
+            image = TF.crop(image, i, j, h, w)
+            mask = TF.crop(mask, i, j, h, w)
+            if torch.rand(1).item() < 0.5:
+                image = TF.hflip(image)
+                mask = TF.hflip(mask)
+            image = self.color_jitter(image)
+        else:
+            image = TF.center_crop(image, self.image_size)
+            mask = TF.center_crop(mask, self.image_size)
+        return self._to_tensor(image, mask)
+
+
+class MaskedContrastiveLearningViewGenerator:
+    def __init__(self, base_transform, n_views=2):
+        self.base_transform = base_transform
+        self.n_views = n_views
+
+    def __call__(self, image, mask):
+        images, masks = [], []
+        for _ in range(self.n_views):
+            image_view, mask_view = self.base_transform(image, mask)
+            images.append(image_view)
+            masks.append(mask_view)
+        return images, masks
 
 
 class MaskedModelWithHead(torch.nn.Module):
@@ -115,7 +178,7 @@ def split_masked_batch(batch):
         isinstance(images, (tuple, list))
         and len(images) == 2
         and isinstance(images[0], (tuple, list))
-        and torch.is_tensor(images[1])
+        and isinstance(images[1], (tuple, list))
     ):
         images, masks = images
     return images, masks, class_labels, uq_idxs, mask_lab
@@ -124,7 +187,15 @@ def split_masked_batch(batch):
 def masks_for_views(masks, images, device):
     if masks is None:
         return None
-    masks = masks.to(device, non_blocking=True)
     if isinstance(images, (tuple, list)):
-        return torch.cat([masks for _ in images], dim=0)
-    return masks
+        return torch.cat(masks, dim=0).to(device, non_blocking=True)
+    return masks.to(device, non_blocking=True)
+
+
+def clear_image_transform(dataset):
+    if isinstance(dataset, MergedDataset):
+        clear_image_transform(dataset.labelled_dataset)
+        clear_image_transform(dataset.unlabelled_dataset)
+        return
+    if hasattr(dataset, "transform"):
+        dataset.transform = None

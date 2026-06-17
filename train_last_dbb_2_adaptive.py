@@ -13,7 +13,13 @@ from config import exp_root
 from data.augmentations import get_transform
 from data.get_datasets import get_class_splits, get_datasets
 from last_train_utils import train_with_optional_masks
-from mask_utils import MaskedDataset, MaskedModelWithHead
+from mask_utils import (
+    MaskedContrastiveLearningViewGenerator,
+    MaskedDataset,
+    MaskedModelWithHead,
+    PairedImagenetTransform,
+    clear_image_transform,
+)
 from model import ContrastiveLearningViewGenerator, DINOHead
 from model_last_dbb_2_adaptive import LASTDBB2AdaptiveBackbone
 from util.general_utils import init_experiment
@@ -241,6 +247,23 @@ if __name__ == "__main__":
     if args.use_mask:
         if args.mask_root is None:
             raise ValueError("--mask_root is required when --use_mask is set.")
+        clear_image_transform(train_dataset)
+        clear_image_transform(unlabelled_train_examples_test)
+        paired_train_transform = MaskedContrastiveLearningViewGenerator(
+            PairedImagenetTransform(
+                image_size=args.image_size,
+                interpolation=args.interpolation,
+                crop_pct=args.crop_pct,
+                train=True,
+            ),
+            n_views=args.n_views,
+        )
+        paired_test_transform = PairedImagenetTransform(
+            image_size=args.image_size,
+            interpolation=args.interpolation,
+            crop_pct=args.crop_pct,
+            train=False,
+        )
         train_dataset = MaskedDataset(
             train_dataset,
             mask_root=args.mask_root,
@@ -248,6 +271,7 @@ if __name__ == "__main__":
             mask_size=args.image_size,
             threshold=args.mask_threshold,
             missing=args.missing_mask,
+            transform=paired_train_transform,
         )
         unlabelled_train_examples_test = MaskedDataset(
             unlabelled_train_examples_test,
@@ -256,6 +280,7 @@ if __name__ == "__main__":
             mask_size=args.image_size,
             threshold=args.mask_threshold,
             missing=args.missing_mask,
+            transform=paired_test_transform,
         )
         args.logger.info(f"Using foreground masks from {args.mask_root}")
 
