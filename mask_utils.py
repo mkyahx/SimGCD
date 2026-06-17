@@ -47,8 +47,39 @@ def infer_image_root(dataset):
     raise RuntimeError(f"Cannot infer image root for dataset type {type(dataset).__name__}.")
 
 
-def mask_path_from_image_path(image_path, image_root, mask_root):
-    rel_path = os.path.relpath(image_path, image_root)
+def path_is_under(path, root):
+    path = os.path.abspath(os.path.expanduser(path))
+    root = os.path.abspath(os.path.expanduser(root))
+    try:
+        return os.path.commonpath([path, root]) == root
+    except ValueError:
+        return False
+
+
+def mask_path_from_image_path(image_path, image_root, mask_root, fallback_image_root=None):
+    image_path = os.path.abspath(os.path.expanduser(image_path))
+    candidate_roots = []
+    for root in (image_root, fallback_image_root):
+        if root:
+            root = os.path.abspath(os.path.expanduser(root))
+            if root not in candidate_roots:
+                candidate_roots.append(root)
+
+    chosen_root = None
+    for root in candidate_roots:
+        if path_is_under(image_path, root):
+            chosen_root = root
+            break
+
+    if chosen_root is None:
+        raise ValueError(
+            f"Image path {image_path} is not under --mask_image_root {image_root} "
+            f"or inferred image root {fallback_image_root}. "
+            "Set --mask_image_root to the image directory whose internal layout matches --mask_root, "
+            "or omit it to use the inferred dataset image root."
+        )
+
+    rel_path = os.path.relpath(image_path, chosen_root)
     rel_no_ext = os.path.splitext(rel_path)[0]
     return os.path.join(mask_root, rel_no_ext + ".npy")
 
@@ -66,7 +97,8 @@ class MaskedDataset(Dataset):
     ):
         self.dataset = dataset
         self.mask_root = os.path.abspath(os.path.expanduser(mask_root))
-        self.image_root = os.path.abspath(os.path.expanduser(image_root)) if image_root else infer_image_root(dataset)
+        self.inferred_image_root = os.path.abspath(os.path.expanduser(infer_image_root(dataset)))
+        self.image_root = os.path.abspath(os.path.expanduser(image_root)) if image_root else self.inferred_image_root
         self.mask_size = int(mask_size)
         self.threshold = float(threshold)
         self.missing = missing
@@ -80,7 +112,12 @@ class MaskedDataset(Dataset):
 
     def _load_mask(self, index):
         image_path = infer_image_path(self.dataset, index)
-        mask_path = mask_path_from_image_path(image_path, self.image_root, self.mask_root)
+        mask_path = mask_path_from_image_path(
+            image_path,
+            self.image_root,
+            self.mask_root,
+            fallback_image_root=self.inferred_image_root,
+        )
         if not os.path.isfile(mask_path):
             if self.missing == "zeros":
                 return torch.zeros(self.mask_size, self.mask_size, dtype=torch.float32)
