@@ -6,7 +6,7 @@
 #SBATCH --ntasks-per-node=1
 #SBATCH --cpus-per-task=8
 #SBATCH --gres=gpu:1
-#SBATCH --mem=48G
+#SBATCH --mem=24G
 #SBATCH --time=6:00:00
 #SBATCH --mail-type=BEGIN,END,FAIL
 #SBATCH --mail-user=mkyahx@connect.hku.hk
@@ -25,14 +25,14 @@ TRAIN_SEED=0
 export PYTHONHASHSEED="${TRAIN_SEED}"
 export CUBLAS_WORKSPACE_CONFIG=:4096:8
 
-MASK_ARGS=()
-# MASK_ARGS=(
-#     --use_mask
-#     --mask_root '/home/mkyahx/CUB_masks'
-#     --mask_image_root '/home/mkyahx/data/CUB_200_2011/images'
-#     --mask_threshold 0.5
-#     --missing_mask 'error'
-# )
+# MASK_ARGS=()
+MASK_ARGS=(
+    --use_mask
+    --mask_root '/home/mkyahx/CUB_masks'
+    --mask_image_root '/home/mkyahx/data/CUB_200_2011/images'
+    --mask_threshold 0.5
+    --missing_mask 'error'
+)
 
 python /home/mkyahx/SimGCD/train_last_1d_channel.py \
     --backbone_repo 'facebookresearch/dinov2' \
@@ -52,11 +52,11 @@ python /home/mkyahx/SimGCD/train_last_1d_channel.py \
     --teacher_temp 0.04 \
     --warmup_teacher_temp_epochs 30 \
     --memax_weight 2 \
-    --last_topk 1 \
+    --last_topk 98 \
     --last_eps 1e-6 \
     --seed "${TRAIN_SEED}" \
     --deterministic \
-    --exp_name cub_simgcd_dinov2_1d_channel \
+    --exp_name cub_simgcd_dinov2_1d_channel_mask_98k \
     "${MASK_ARGS[@]}"
 
 conda deactivate
