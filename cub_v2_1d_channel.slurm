@@ -10,8 +10,8 @@
 #SBATCH --time=6:00:00
 #SBATCH --mail-type=BEGIN,END,FAIL
 #SBATCH --mail-user=mkyahx@connect.hku.hk
-#SBATCH --output=~/logs/simgcd_cub_v2_2d_ada_%j.out
-#SBATCH --error=~/logs/simgcd_cub_v2_2d_ada_%j.err
+#SBATCH --output=~/logs/simgcd_cub_v2_1d_channel_%j.out
+#SBATCH --error=~/logs/simgcd_cub_v2_1d_channel_%j.err
 
 
 set -e
@@ -20,6 +20,7 @@ set -x
 source /home/mkyahx/miniconda3/etc/profile.d/conda.sh
 conda activate simgcd
 cd /home/mkyahx/SimGCD/
+
 TRAIN_SEED=0
 export PYTHONHASHSEED="${TRAIN_SEED}"
 export CUBLAS_WORKSPACE_CONFIG=:4096:8
@@ -33,7 +34,7 @@ MASK_ARGS=()
 #     --missing_mask 'error'
 # )
 
-python /home/mkyahx/SimGCD/train_last_dbb_2_adaptive.py \
+python /home/mkyahx/SimGCD/train_last_1d_channel.py \
     --backbone_repo 'facebookresearch/dinov2' \
     --backbone_name 'dinov2_vitb14' \
     --dataset_name 'cub' \
@@ -51,13 +52,11 @@ python /home/mkyahx/SimGCD/train_last_dbb_2_adaptive.py \
     --teacher_temp 0.04 \
     --warmup_teacher_temp_epochs 30 \
     --memax_weight 2 \
-    --sf_mask_mode 'adaptive' \
-    --sf_adaptive_k 1.0 \
-    --sf_topk 4 \
-    --sf_vote_topk 4 \
+    --last_topk 1 \
+    --last_eps 1e-6 \
     --seed "${TRAIN_SEED}" \
     --deterministic \
-    --exp_name cub_simgcd_dinov2_2d_ada \
+    --exp_name cub_simgcd_dinov2_1d_channel \
     "${MASK_ARGS[@]}"
 
 conda deactivate

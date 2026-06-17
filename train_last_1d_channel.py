@@ -21,7 +21,7 @@ from mask_utils import (
     clear_image_transform,
 )
 from model import ContrastiveLearningViewGenerator, DINOHead
-from model_last_dbb_2_adaptive import LASTDBB2AdaptiveBackbone
+from model_last_1d_channel import LASTViT1DChannelBackbone
 from util.general_utils import init_experiment
 
 
@@ -61,7 +61,7 @@ def ensure_runtime_tmpdir(args):
     tmp_root = os.path.abspath(os.path.expanduser(tmp_root))
     os.makedirs(tmp_root, exist_ok=True)
 
-    unique_name = f"simgcd_last_dbb_2_adaptive_{os.getpid()}_{int(time.time())}"
+    unique_name = f"simgcd_last_1d_channel_{os.getpid()}_{int(time.time())}"
     tmpdir = os.path.join(tmp_root, unique_name)
     os.makedirs(tmpdir, exist_ok=True)
     os.environ["TMPDIR"] = tmpdir
@@ -178,12 +178,12 @@ if __name__ == "__main__":
     parser.add_argument("--backbone_weights", default=None, type=str)
     parser.add_argument("--image_size", default=224, type=int)
 
-    parser.add_argument("--sf_topk", default=4, type=int)
-    parser.add_argument("--sf_vote_topk", default=None, type=int)
-    parser.add_argument("--sf_eps", default=1e-6, type=float)
-    parser.add_argument("--sf_mask_mode", default="fixed", choices=["fixed", "adaptive"])
-    parser.add_argument("--sf_sigma", default=None, type=float)
-    parser.add_argument("--sf_adaptive_k", default=1.0, type=float)
+    parser.add_argument("--last_topk", default=1, type=int,
+                        help="Number of selected patch tokens per channel for 1D LAST.")
+    parser.add_argument("--last_eps", default=1e-6, type=float,
+                        help="Numerical epsilon used in 1D LAST patch scoring.")
+    parser.add_argument("--last_sigma", default=None, type=float,
+                        help="Gaussian sigma for 1D LAST. Defaults to sqrt(feat_dim).")
     parser.add_argument("--last_token_source", default="patch", choices=["patch", "all"])
     parser.add_argument("--use_mask", action="store_true", default=False,
                         help="Restrict LAST token selection to foreground patches from .npy masks.")
@@ -205,7 +205,7 @@ if __name__ == "__main__":
     args.num_labeled_classes = len(args.train_classes)
     args.num_unlabeled_classes = len(args.unlabeled_classes)
 
-    init_experiment(args, runner_name=["simgcd_last_dbb_2_adaptive"])
+    init_experiment(args, runner_name=["simgcd_last_1d_channel"])
     ensure_runtime_tmpdir(args)
     args.logger.info(f"Using evaluation function {args.eval_funcs[0]} to print results")
 
@@ -222,16 +222,13 @@ if __name__ == "__main__":
     set_backbone_trainable(backbone, args.grad_from_block)
 
     args.logger.info(
-        "Building LAST DBB 2D Adaptive backbone=%s repo=%s feat_dim=%s topk=%s vote_topk=%s mask_mode=%s sigma=%s adaptive_k=%s"
+        "Building LAST 1D Channel backbone=%s repo=%s feat_dim=%s topk=%s sigma=%s"
         % (
             args.backbone_name,
             args.backbone_repo,
             args.feat_dim,
-            args.sf_topk,
-            args.sf_vote_topk if args.sf_vote_topk is not None else args.sf_topk,
-            args.sf_mask_mode,
-            args.sf_sigma if args.sf_sigma is not None else args.feat_dim ** 0.5,
-            args.sf_adaptive_k,
+            args.last_topk,
+            args.last_sigma if args.last_sigma is not None else args.feat_dim ** 0.5,
         )
     )
 
@@ -317,17 +314,14 @@ if __name__ == "__main__":
         **make_loader_kwargs(args, pin_memory=False, persistent_workers=False),
     )
 
-    sf_backbone = LASTDBB2AdaptiveBackbone(
+    last_backbone = LASTViT1DChannelBackbone(
         backbone=backbone,
-        topk=args.sf_topk,
-        vote_topk=args.sf_vote_topk,
-        eps=args.sf_eps,
+        topk=args.last_topk,
+        eps=args.last_eps,
         token_source=args.last_token_source,
-        mask_mode=args.sf_mask_mode,
-        sigma=args.sf_sigma,
-        adaptive_k=args.sf_adaptive_k,
+        sigma=args.last_sigma,
     )
     projector = DINOHead(in_dim=args.feat_dim, out_dim=args.mlp_out_dim, nlayers=args.num_mlp_layers)
-    model = MaskedModelWithHead(sf_backbone, projector).to(device)
+    model = MaskedModelWithHead(last_backbone, projector).to(device)
 
     train_with_optional_masks(model, train_loader, None, test_loader_unlabelled, args)

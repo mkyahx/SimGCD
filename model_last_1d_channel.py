@@ -5,35 +5,33 @@ import torch.nn as nn
 import torch.nn.functional as F
 
 
-class LASTDBB2AdaptiveBackbone(nn.Module):
+class LASTViT1DChannelBackbone(nn.Module):
     """
-    2D spatial-frequency LAST with fixed/adaptive Gaussian masks.
+    LaSt-ViT channel-domain 1D FFT backbone wrapper.
 
-    Keeps the vote-based patch selection from model_last_dbb_2.py. The score is
-    always stable: abs(original) / abs(filtered - original).
+    This follows the original LaSt-ViT replacement idea: drop the encoded CLS
+    token, filter every patch token along its channel dimension, select stable
+    patch channels with Top-K over patches, and average selected original patch
+    tokens into a CLS-like image feature.
     """
 
     def __init__(
         self,
         backbone: nn.Module,
-        topk: int = 4,
-        vote_topk: int = None,
+        topk: int = 1,
         eps: float = 1e-6,
         token_source: str = "patch",
-        mask_mode: str = "fixed",
         sigma: float = None,
-        adaptive_k: float = 1.0,
     ):
         super().__init__()
         self.backbone = backbone
         self.embed_dim = self._infer_embed_dim(backbone)
         self.topk = max(1, int(topk))
-        self.vote_topk = max(1, int(vote_topk)) if vote_topk is not None else self.topk
         self.eps = float(eps)
         self.token_source = token_source
-        self.mask_mode = mask_mode
         self.sigma = float(sigma) if sigma is not None else math.sqrt(float(self.embed_dim))
-        self.adaptive_k = float(adaptive_k)
+        self.cached_kernel = None
+        self.cached_kernel_meta = None
 
     @staticmethod
     def _infer_embed_dim(backbone: nn.Module) -> int:
@@ -153,57 +151,42 @@ class LASTDBB2AdaptiveBackbone(nn.Module):
         num_register_tokens = int(getattr(self.backbone, "num_register_tokens", 0))
         return tokens[:, num_register_tokens + 1 :]
 
-    def radial_grid(self, grid_h: int, grid_w: int, device, dtype):
-        yy = torch.arange(grid_h, device=device, dtype=dtype) - (grid_h - 1) / 2.0
-        xx = torch.arange(grid_w, device=device, dtype=dtype) - (grid_w - 1) / 2.0
-        yy = yy.view(grid_h, 1)
-        xx = xx.view(1, grid_w)
-        radius = torch.sqrt(yy.pow(2) + xx.pow(2))
-        max_radius = radius.max().clamp_min(self.eps)
-        return radius / max_radius * (0.5 * float(self.embed_dim))
-
-    def fixed_gaussian_mask(self, radius: torch.Tensor) -> torch.Tensor:
+    def gaussian_kernel_1d(self, kernel_size: int, device, dtype) -> torch.Tensor:
+        offsets = torch.arange(
+            -kernel_size // 2 + 1,
+            kernel_size // 2 + 1,
+            device=device,
+            dtype=dtype,
+        )
         sigma = max(self.sigma, self.eps)
-        return torch.exp(-radius.pow(2) / (2.0 * sigma ** 2)).view(1, 1, *radius.shape)
+        kernel = torch.exp(-0.5 * (offsets / sigma) ** 2)
+        kernel = kernel / torch.max(kernel).clamp_min(self.eps)
+        return kernel.view(1, 1, kernel_size)
 
-    def adaptive_gaussian_mask(self, amplitude: torch.Tensor, radius: torch.Tensor) -> torch.Tensor:
-        energy = amplitude.pow(2).mean(dim=1)
-        denom = energy.sum(dim=(-2, -1), keepdim=True).clamp_min(self.eps)
-        radial_energy = (energy * radius.view(1, *radius.shape)).sum(dim=(-2, -1), keepdim=True) / denom
-        sigma = (self.adaptive_k * radial_energy).clamp_min(self.eps)
-        return torch.exp(-radius.view(1, *radius.shape).pow(2) / (2.0 * sigma.pow(2))).unsqueeze(1)
+    def get_gaussian_kernel(self, feat_dim: int, device, dtype) -> torch.Tensor:
+        meta = (feat_dim, float(self.sigma), device, dtype)
+        if self.cached_kernel is None or self.cached_kernel_meta != meta:
+            self.cached_kernel = self.gaussian_kernel_1d(feat_dim, device, dtype)
+            self.cached_kernel_meta = meta
+        return self.cached_kernel
 
-    def gaussian_mask(self, amplitude: torch.Tensor, radius: torch.Tensor) -> torch.Tensor:
-        if self.mask_mode == "adaptive":
-            return self.adaptive_gaussian_mask(amplitude, radius)
-        if self.mask_mode != "fixed":
-            raise ValueError(f"Unknown mask_mode: {self.mask_mode}")
-        return self.fixed_gaussian_mask(radius).to(dtype=amplitude.dtype)
+    def channel_frequency_filter(self, patch_tokens: torch.Tensor) -> torch.Tensor:
+        patch_tokens_float = patch_tokens.float()
+        feat_dim = patch_tokens_float.shape[-1]
+        kernel = self.get_gaussian_kernel(feat_dim, patch_tokens_float.device, patch_tokens_float.dtype)
 
-    def spatial_frequency_filter(self, patch_tokens: torch.Tensor, x: torch.Tensor) -> torch.Tensor:
-        batch_size, num_patches, channels = patch_tokens.shape
-        grid_h, grid_w = self._infer_grid(num_patches, x)
-        fmap = patch_tokens.view(batch_size, grid_h, grid_w, channels).permute(0, 3, 1, 2)
-
-        spectrum = torch.fft.fft2(fmap, dim=(-2, -1), norm="ortho")
-        spectrum = torch.fft.fftshift(spectrum, dim=(-2, -1))
-        amplitude = torch.abs(spectrum)
-        phase = torch.angle(spectrum)
-
-        radius = self.radial_grid(grid_h, grid_w, device=fmap.device, dtype=fmap.dtype)
-        mask = self.gaussian_mask(amplitude, radius).to(dtype=amplitude.dtype)
-        hi_mask = 1- mask
-    
-        filtered_spectrum = torch.polar(amplitude * hi_mask, phase)
-        filtered_spectrum = torch.fft.ifftshift(filtered_spectrum, dim=(-2, -1))
-        filtered = torch.fft.ifft2(filtered_spectrum, dim=(-2, -1), norm="ortho").real
-        return filtered.permute(0, 2, 3, 1).reshape(batch_size, num_patches, channels)
+        spectrum = torch.fft.fft(patch_tokens_float, dim=-1)
+        spectrum = torch.fft.fftshift(spectrum, dim=-1)
+        filtered_spectrum = spectrum * kernel
+        filtered_spectrum = torch.fft.ifftshift(filtered_spectrum, dim=-1)
+        return torch.fft.ifft(filtered_spectrum, dim=-1).real
 
     def stability_scores(self, patch_tokens: torch.Tensor, filtered_tokens: torch.Tensor) -> torch.Tensor:
-        denom = torch.abs(filtered_tokens - patch_tokens).clamp_min(self.eps)
-        return torch.abs(patch_tokens) / denom
+        patch_tokens_float = patch_tokens.float()
+        denom = torch.abs(filtered_tokens - patch_tokens_float).clamp_min(self.eps)
+        return patch_tokens_float / denom
 
-    def vote_select(self, patch_tokens: torch.Tensor, scores: torch.Tensor, patch_mask: torch.Tensor = None) -> torch.Tensor:
+    def channel_topk_select(self, patch_tokens: torch.Tensor, scores: torch.Tensor, patch_mask: torch.Tensor = None) -> torch.Tensor:
         if patch_mask is not None:
             outputs = []
             for sample_tokens, sample_scores, sample_mask in zip(patch_tokens, scores, patch_mask):
@@ -212,28 +195,20 @@ class LASTDBB2AdaptiveBackbone(nn.Module):
                 if valid_tokens.shape[0] == 0:
                     valid_tokens = sample_tokens
                     valid_scores = sample_scores
-                outputs.append(self.vote_select(valid_tokens.unsqueeze(0), valid_scores.unsqueeze(0), None).squeeze(0))
+                outputs.append(self.channel_topk_select(valid_tokens.unsqueeze(0), valid_scores.unsqueeze(0), None).squeeze(0))
             return torch.stack(outputs, dim=0)
 
-        channel_k = min(self.vote_topk, patch_tokens.shape[1])
-        _, channel_indices = torch.topk(scores, k=channel_k, dim=1, largest=True)
-
-        votes = torch.zeros(scores.shape[0], scores.shape[1], device=scores.device, dtype=scores.dtype)
-        ones = torch.ones_like(channel_indices, dtype=scores.dtype)
-        votes.scatter_add_(1, channel_indices.reshape(scores.shape[0], -1), ones.reshape(scores.shape[0], -1))
-
         patch_k = min(self.topk, patch_tokens.shape[1])
-        _, patch_indices = torch.topk(votes, k=patch_k, dim=1, largest=True)
-        gather_indices = patch_indices.unsqueeze(-1).expand(-1, -1, patch_tokens.shape[-1])
-        selected = torch.gather(patch_tokens, 1, gather_indices)
+        _, indices = torch.topk(scores, k=patch_k, dim=1, largest=True)
+        selected = torch.gather(patch_tokens, 1, indices)
         return selected.mean(dim=1)
 
     def forward(self, x: torch.Tensor, masks: torch.Tensor = None) -> torch.Tensor:
         patch_tokens = self.forward_patch_tokens(x)
-        filtered_tokens = self.spatial_frequency_filter(patch_tokens, x)
+        filtered_tokens = self.channel_frequency_filter(patch_tokens)
         scores = self.stability_scores(patch_tokens, filtered_tokens)
         patch_mask = None
         if masks is not None:
             grid_h, grid_w = self._infer_grid(patch_tokens.shape[1], x)
             patch_mask = self.masks_to_patch_mask(masks, grid_h, grid_w)
-        return self.vote_select(patch_tokens, scores, patch_mask)
+        return self.channel_topk_select(patch_tokens, scores, patch_mask)
