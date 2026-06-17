@@ -29,7 +29,6 @@ MASK_ARGS=()
 # MASK_ARGS=(
 #     --use_mask
 #     --mask_root '/home/mkyahx/CUB_masks'
-#     --mask_image_root '/home/mkyahx/data/CUB_200_2011/images'
 #     --mask_threshold 0.5
 #     --missing_mask 'error'
 # )

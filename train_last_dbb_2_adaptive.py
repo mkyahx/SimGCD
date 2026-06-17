@@ -190,7 +190,8 @@ if __name__ == "__main__":
     parser.add_argument("--mask_root", default=None, type=str,
                         help="Root directory for .npy masks with the same relative layout as images.")
     parser.add_argument("--mask_image_root", default=None, type=str,
-                        help="Optional image root used to compute relative paths into --mask_root.")
+                        help="Optional image root whose internal relative layout matches --mask_root. "
+                             "If omitted or incompatible, the inferred dataset image root is used.")
     parser.add_argument("--mask_threshold", default=0.5, type=float,
                         help="Threshold used to binarize loaded masks.")
     parser.add_argument("--missing_mask", default="error", choices=["error", "zeros", "ones"],
