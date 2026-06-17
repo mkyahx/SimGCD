@@ -2,6 +2,7 @@ import math
 
 import torch
 import torch.nn as nn
+import torch.nn.functional as F
 
 
 class LASTDBB2AdaptiveBackbone(nn.Module):
@@ -70,6 +71,20 @@ class LASTDBB2AdaptiveBackbone(nn.Module):
         if side * side == num_patches:
             return side, side
         raise ValueError(f"Cannot infer patch grid for {num_patches} tokens.")
+
+    def masks_to_patch_mask(self, masks: torch.Tensor, grid_h: int, grid_w: int) -> torch.Tensor:
+        if masks is None:
+            return None
+        if masks.ndim == 3:
+            masks = masks.unsqueeze(1)
+        if masks.ndim != 4:
+            raise ValueError(f"Expected masks with shape [B,H,W] or [B,1,H,W], got {tuple(masks.shape)}")
+        patch_mask = F.interpolate(masks.float(), size=(grid_h, grid_w), mode="nearest")
+        patch_mask = patch_mask.flatten(2).squeeze(1) > 0.5
+        empty = ~patch_mask.any(dim=1)
+        if empty.any():
+            patch_mask[empty] = True
+        return patch_mask
 
     def _prepare_tokens_fallback(self, x: torch.Tensor) -> torch.Tensor:
         if hasattr(self.backbone, "prepare_tokens"):
@@ -188,7 +203,18 @@ class LASTDBB2AdaptiveBackbone(nn.Module):
         denom = torch.abs(filtered_tokens - patch_tokens).clamp_min(self.eps)
         return torch.abs(patch_tokens) / denom
 
-    def vote_select(self, patch_tokens: torch.Tensor, scores: torch.Tensor) -> torch.Tensor:
+    def vote_select(self, patch_tokens: torch.Tensor, scores: torch.Tensor, patch_mask: torch.Tensor = None) -> torch.Tensor:
+        if patch_mask is not None:
+            outputs = []
+            for sample_tokens, sample_scores, sample_mask in zip(patch_tokens, scores, patch_mask):
+                valid_tokens = sample_tokens[sample_mask]
+                valid_scores = sample_scores[sample_mask]
+                if valid_tokens.shape[0] == 0:
+                    valid_tokens = sample_tokens
+                    valid_scores = sample_scores
+                outputs.append(self.vote_select(valid_tokens.unsqueeze(0), valid_scores.unsqueeze(0), None).squeeze(0))
+            return torch.stack(outputs, dim=0)
+
         channel_k = min(self.vote_topk, patch_tokens.shape[1])
         _, channel_indices = torch.topk(scores, k=channel_k, dim=1, largest=True)
 
@@ -202,8 +228,12 @@ class LASTDBB2AdaptiveBackbone(nn.Module):
         selected = torch.gather(patch_tokens, 1, gather_indices)
         return selected.mean(dim=1)
 
-    def forward(self, x: torch.Tensor) -> torch.Tensor:
+    def forward(self, x: torch.Tensor, masks: torch.Tensor = None) -> torch.Tensor:
         patch_tokens = self.forward_patch_tokens(x)
         filtered_tokens = self.spatial_frequency_filter(patch_tokens, x)
         scores = self.stability_scores(patch_tokens, filtered_tokens)
-        return self.vote_select(patch_tokens, scores)
+        patch_mask = None
+        if masks is not None:
+            grid_h, grid_w = self._infer_grid(patch_tokens.shape[1], x)
+            patch_mask = self.masks_to_patch_mask(masks, grid_h, grid_w)
+        return self.vote_select(patch_tokens, scores, patch_mask)

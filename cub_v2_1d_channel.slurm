@@ -25,6 +25,15 @@ TRAIN_SEED=0
 export PYTHONHASHSEED="${TRAIN_SEED}"
 export CUBLAS_WORKSPACE_CONFIG=:4096:8
 
+MASK_ARGS=()
+# MASK_ARGS=(
+#     --use_mask
+#     --mask_root '/home/mkyahx/CUB_masks'
+#     --mask_image_root '/home/mkyahx/data/CUB_200_2011/images'
+#     --mask_threshold 0.5
+#     --missing_mask 'error'
+# )
+
 python /home/mkyahx/SimGCD/train_last_1d_channel.py \
     --backbone_repo 'facebookresearch/dinov2' \
     --backbone_name 'dinov2_vitb14' \
@@ -47,7 +56,8 @@ python /home/mkyahx/SimGCD/train_last_1d_channel.py \
     --last_eps 1e-6 \
     --seed "${TRAIN_SEED}" \
     --deterministic \
-    --exp_name cub_simgcd_dinov2_1d_channel
+    --exp_name cub_simgcd_dinov2_1d_channel \
+    "${MASK_ARGS[@]}"
 
 conda deactivate
 echo "Finish"

@@ -2,6 +2,7 @@ import math
 
 import torch
 import torch.nn as nn
+import torch.nn.functional as F
 
 
 class LASTViT1DChannelBackbone(nn.Module):
@@ -42,6 +43,46 @@ class LASTViT1DChannelBackbone(nn.Module):
         if hasattr(backbone, "pos_embed"):
             return int(backbone.pos_embed.shape[-1])
         raise RuntimeError("Could not infer backbone feature dimension.")
+
+    def _patch_size(self):
+        patch_embed = getattr(self.backbone, "patch_embed", None)
+        patch_size = getattr(patch_embed, "patch_size", None)
+        if patch_size is None:
+            patch_size = getattr(self.backbone, "patch_size", None)
+        if isinstance(patch_size, (tuple, list)):
+            return int(patch_size[0]), int(patch_size[1])
+        if patch_size is not None:
+            patch_size = int(patch_size)
+            return patch_size, patch_size
+        return None
+
+    def _infer_grid(self, num_patches: int, x: torch.Tensor):
+        patch_size = self._patch_size()
+        if patch_size is not None:
+            ph, pw = patch_size
+            gh = int(x.shape[-2]) // ph
+            gw = int(x.shape[-1]) // pw
+            if gh * gw == num_patches:
+                return gh, gw
+
+        side = int(math.sqrt(num_patches))
+        if side * side == num_patches:
+            return side, side
+        raise ValueError(f"Cannot infer patch grid for {num_patches} tokens.")
+
+    def masks_to_patch_mask(self, masks: torch.Tensor, grid_h: int, grid_w: int) -> torch.Tensor:
+        if masks is None:
+            return None
+        if masks.ndim == 3:
+            masks = masks.unsqueeze(1)
+        if masks.ndim != 4:
+            raise ValueError(f"Expected masks with shape [B,H,W] or [B,1,H,W], got {tuple(masks.shape)}")
+        patch_mask = F.interpolate(masks.float(), size=(grid_h, grid_w), mode="nearest")
+        patch_mask = patch_mask.flatten(2).squeeze(1) > 0.5
+        empty = ~patch_mask.any(dim=1)
+        if empty.any():
+            patch_mask[empty] = True
+        return patch_mask
 
     def _prepare_tokens_fallback(self, x: torch.Tensor) -> torch.Tensor:
         if hasattr(self.backbone, "prepare_tokens"):
@@ -145,14 +186,29 @@ class LASTViT1DChannelBackbone(nn.Module):
         denom = torch.abs(filtered_tokens - patch_tokens_float).clamp_min(self.eps)
         return patch_tokens_float / denom
 
-    def channel_topk_select(self, patch_tokens: torch.Tensor, scores: torch.Tensor) -> torch.Tensor:
+    def channel_topk_select(self, patch_tokens: torch.Tensor, scores: torch.Tensor, patch_mask: torch.Tensor = None) -> torch.Tensor:
+        if patch_mask is not None:
+            outputs = []
+            for sample_tokens, sample_scores, sample_mask in zip(patch_tokens, scores, patch_mask):
+                valid_tokens = sample_tokens[sample_mask]
+                valid_scores = sample_scores[sample_mask]
+                if valid_tokens.shape[0] == 0:
+                    valid_tokens = sample_tokens
+                    valid_scores = sample_scores
+                outputs.append(self.channel_topk_select(valid_tokens.unsqueeze(0), valid_scores.unsqueeze(0), None).squeeze(0))
+            return torch.stack(outputs, dim=0)
+
         patch_k = min(self.topk, patch_tokens.shape[1])
         _, indices = torch.topk(scores, k=patch_k, dim=1, largest=True)
         selected = torch.gather(patch_tokens, 1, indices)
         return selected.mean(dim=1)
 
-    def forward(self, x: torch.Tensor) -> torch.Tensor:
+    def forward(self, x: torch.Tensor, masks: torch.Tensor = None) -> torch.Tensor:
         patch_tokens = self.forward_patch_tokens(x)
         filtered_tokens = self.channel_frequency_filter(patch_tokens)
         scores = self.stability_scores(patch_tokens, filtered_tokens)
-        return self.channel_topk_select(patch_tokens, scores)
+        patch_mask = None
+        if masks is not None:
+            grid_h, grid_w = self._infer_grid(patch_tokens.shape[1], x)
+            patch_mask = self.masks_to_patch_mask(masks, grid_h, grid_w)
+        return self.channel_topk_select(patch_tokens, scores, patch_mask)

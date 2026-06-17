@@ -12,9 +12,10 @@ from torch.utils.data import DataLoader
 from config import exp_root
 from data.augmentations import get_transform
 from data.get_datasets import get_class_splits, get_datasets
+from last_train_utils import train_with_optional_masks
+from mask_utils import MaskedDataset, MaskedModelWithHead
 from model import ContrastiveLearningViewGenerator, DINOHead
 from model_last_dbb_2_adaptive import LASTDBB2AdaptiveBackbone
-from train import train
 from util.general_utils import init_experiment
 
 
@@ -178,6 +179,16 @@ if __name__ == "__main__":
     parser.add_argument("--sf_sigma", default=None, type=float)
     parser.add_argument("--sf_adaptive_k", default=1.0, type=float)
     parser.add_argument("--last_token_source", default="patch", choices=["patch", "all"])
+    parser.add_argument("--use_mask", action="store_true", default=False,
+                        help="Restrict LAST token selection to foreground patches from .npy masks.")
+    parser.add_argument("--mask_root", default=None, type=str,
+                        help="Root directory for .npy masks with the same relative layout as images.")
+    parser.add_argument("--mask_image_root", default=None, type=str,
+                        help="Optional image root used to compute relative paths into --mask_root.")
+    parser.add_argument("--mask_threshold", default=0.5, type=float,
+                        help="Threshold used to binarize loaded masks.")
+    parser.add_argument("--missing_mask", default="error", choices=["error", "zeros", "ones"],
+                        help="Behavior when a mask file is missing.")
 
     args = parser.parse_args()
     if args.seed is not None:
@@ -227,6 +238,26 @@ if __name__ == "__main__":
         test_transform,
         args,
     )
+    if args.use_mask:
+        if args.mask_root is None:
+            raise ValueError("--mask_root is required when --use_mask is set.")
+        train_dataset = MaskedDataset(
+            train_dataset,
+            mask_root=args.mask_root,
+            image_root=args.mask_image_root,
+            mask_size=args.image_size,
+            threshold=args.mask_threshold,
+            missing=args.missing_mask,
+        )
+        unlabelled_train_examples_test = MaskedDataset(
+            unlabelled_train_examples_test,
+            mask_root=args.mask_root,
+            image_root=args.mask_image_root,
+            mask_size=args.image_size,
+            threshold=args.mask_threshold,
+            missing=args.missing_mask,
+        )
+        args.logger.info(f"Using foreground masks from {args.mask_root}")
 
     label_len = len(train_dataset.labelled_dataset)
     unlabelled_len = len(train_dataset.unlabelled_dataset)
@@ -272,6 +303,6 @@ if __name__ == "__main__":
         adaptive_k=args.sf_adaptive_k,
     )
     projector = DINOHead(in_dim=args.feat_dim, out_dim=args.mlp_out_dim, nlayers=args.num_mlp_layers)
-    model = nn.Sequential(sf_backbone, projector).to(device)
+    model = MaskedModelWithHead(sf_backbone, projector).to(device)
 
-    train(model, train_loader, None, test_loader_unlabelled, args)
+    train_with_optional_masks(model, train_loader, None, test_loader_unlabelled, args)
