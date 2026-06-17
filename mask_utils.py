@@ -98,11 +98,12 @@ class MaskedDataset(Dataset):
 
     def __getitem__(self, index):
         item = self.dataset[index]
-        image, target, uq_idx = item
+        image = item[0]
+        rest = item[1:]
         mask = self._load_mask(index)
         if self.transform is not None:
             image, mask = self.transform(image, mask)
-        return (image, mask), target, uq_idx
+        return ((image, mask), *rest)
 
 
 class PairedImagenetTransform:
