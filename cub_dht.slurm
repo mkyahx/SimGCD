@@ -20,13 +20,13 @@ source /home/mkyahx/miniconda3/etc/profile.d/conda.sh
 
 # dHT requires PyTorch >= 2.7. Override when your environment has another name:
 #   DHT_CONDA_ENV=my_dht_env sbatch cub_dht.slurm
-DHT_CONDA_ENV="${DHT_CONDA_ENV:-simgcd_dht}"
+DHT_CONDA_ENV="${DHT_CONDA_ENV:-simgcd}"
 conda activate "${DHT_CONDA_ENV}"
 
 REPO_ROOT="${REPO_ROOT:-/home/mkyahx/SimGCD}"
 DHT_ROOT="${DHT_ROOT:-/home/mkyahx/dHT}"
-MASK_ROOT="${MASK_ROOT:-/home/mkyahx/CUB_masks}"
-MASK_IMAGE_ROOT="${MASK_IMAGE_ROOT:-/home/mkyahx/data/CUB_200_2011/images}"
+MASK_ROOT="${MASK_ROOT:-/home/mkyahx/masks_cub/CUB_200_2011_tokencut_masks_vit_base}"
+MASK_IMAGE_ROOT="${MASK_IMAGE_ROOT:-/lustre1/g/stat_han/datasets/cub/CUB_200_2011/images}"
 
 cd "${REPO_ROOT}"
 
@@ -39,7 +39,7 @@ export PYTHONPATH="${REPO_ROOT}:${DHT_ROOT}:${PYTHONPATH:-}"
 #   none          : dHT only; TokenCut masks are not read.
 #   fixed         : fixed foreground ratio controlled by DHT_FG_RATIO.
 #   area_weighted : allocation follows mask area and DHT_FG_DENSITY.
-DHT_MASK_MODE="${DHT_MASK_MODE:-area_weighted}"
+DHT_MASK_MODE="${DHT_MASK_MODE:-none}"
 DHT_FG_RATIO="${DHT_FG_RATIO:-0.75}"
 DHT_FG_DENSITY="${DHT_FG_DENSITY:-3.0}"
 
