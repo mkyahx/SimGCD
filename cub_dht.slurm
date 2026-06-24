@@ -38,6 +38,11 @@ print('GPU:', torch.cuda.get_device_name(0) if torch.cuda.is_available() else 'N
 # ====================== 训练命令 ======================
 REPO_ROOT=/home/mkyahx/SimGCD
 DHT_ROOT=/home/mkyahx/dHT
+DHT_MODE=${DHT_MODE:-fusion}
+DHT_ALPHA=${DHT_ALPHA:-0.1}
+DHT_MASK_MODE=${DHT_MASK_MODE:-none}
+DHT_FG_RATIO=${DHT_FG_RATIO:-0.75}
+DHT_FG_DENSITY=${DHT_FG_DENSITY:-3.0}
 cd ${REPO_ROOT}
 
 python train_dht.py \
@@ -61,11 +66,13 @@ python train_dht.py \
     --memax_weight 2 \
     --dht_num_tokens 196 \
     --dht_patch_size 16 \
-    --dht_mask_mode none \
-    --dht_fg_ratio 0.75 \
-    --dht_fg_density 3.0 \
+    --dht_mask_mode ${DHT_MASK_MODE} \
+    --dht_fg_ratio ${DHT_FG_RATIO} \
+    --dht_fg_density ${DHT_FG_DENSITY} \
     --dht_min_fg_tokens 16 \
     --dht_min_bg_tokens 16 \
+    --dht_mode ${DHT_MODE} \
+    --dht_alpha ${DHT_ALPHA} \
     --seed 0 \
     --deterministic \
-    --exp_name cub_simgcd_dino_v1_dht_none
+    --exp_name cub_simgcd_dino_v1_dht_${DHT_MODE}_alpha${DHT_ALPHA}_${DHT_MASK_MODE}

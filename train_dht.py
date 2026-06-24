@@ -279,15 +279,21 @@ class DHTRegionTokenizer(nn.Module):
 class DHTDINOBackbone(nn.Module):
     """Reuse pretrained DINO v1 transformer blocks over dHT region tokens."""
 
-    def __init__(self, backbone, tokenizer):
+    def __init__(self, backbone, tokenizer, mode="fusion", alpha=0.1):
         super().__init__()
+        if mode not in {"cls", "replace", "fusion"}:
+            raise ValueError(f"Unknown dHT mode: {mode}")
+        if not 0.0 <= float(alpha) <= 1.0:
+            raise ValueError("--dht_alpha must be in [0, 1].")
         self.backbone = backbone
         self.tokenizer = tokenizer
+        self.mode = mode
+        self.alpha = float(alpha)
         self.embed_dim = int(
             getattr(backbone, "embed_dim", getattr(backbone, "num_features", 768))
         )
 
-    def forward(self, images, masks=None):
+    def forward_replace(self, images, masks=None):
         region_tokens = self.tokenizer(images, masks)
         cls = self.backbone.cls_token.expand(images.shape[0], -1, -1)
         tokens = torch.cat([cls, region_tokens], dim=1)
@@ -300,6 +306,17 @@ class DHTDINOBackbone(nn.Module):
             tokens = block(tokens)
         tokens = self.backbone.norm(tokens)
         return tokens[:, 0]
+
+    def forward(self, images, masks=None):
+        cls_feature = self.backbone(images)
+        if self.mode == "cls":
+            return cls_feature
+
+        dht_feature = self.forward_replace(images, masks)
+        if self.mode == "replace":
+            return dht_feature
+
+        return (1.0 - self.alpha) * cls_feature + self.alpha * dht_feature
 
 
 def build_parser():
@@ -360,6 +377,13 @@ def build_parser():
     parser.add_argument("--dht_min_bg_tokens", default=16, type=int)
     parser.add_argument("--dht_tokenizer_hidden", default=3, type=int)
     parser.add_argument("--freeze_dht", action="store_true", default=False)
+    parser.add_argument(
+        "--dht_mode",
+        default="fusion",
+        choices=["cls", "replace", "fusion"],
+        help="How dHT is applied: cls keeps original DINO CLS, replace uses dHT tokens, fusion blends both.",
+    )
+    parser.add_argument("--dht_alpha", default=0.1, type=float)
 
     parser.add_argument("--mask_root", default=None, type=str)
     parser.add_argument("--mask_image_root", default=None, type=str)
@@ -375,6 +399,8 @@ def build_parser():
 def validate_args(args):
     if args.dht_num_tokens != 196:
         raise ValueError("This baseline fixes --dht_num_tokens at 196.")
+    if not 0.0 <= args.dht_alpha <= 1.0:
+        raise ValueError("--dht_alpha must be in [0, 1].")
     if args.dht_mask_mode != "none" and args.mask_root is None:
         raise ValueError("--mask_root is required when dHT mask mode is enabled.")
     allocate_token_budget(
@@ -520,7 +546,12 @@ def main():
         tokenizer_hidden=args.dht_tokenizer_hidden,
         trainable=not args.freeze_dht,
     )
-    dht_backbone = DHTDINOBackbone(backbone, tokenizer)
+    dht_backbone = DHTDINOBackbone(
+        backbone,
+        tokenizer,
+        mode=args.dht_mode,
+        alpha=args.dht_alpha,
+    )
     projector = DINOHead(
         in_dim=768,
         out_dim=args.mlp_out_dim,
@@ -529,10 +560,12 @@ def main():
     model = MaskedModelWithHead(dht_backbone, projector).to(device)
 
     args.logger.info(
-        "dHT-SimGCD: DINO=%s tokens=%d mask_mode=%s fg_ratio=%.3f fg_density=%.3f"
+        "dHT-SimGCD: DINO=%s tokens=%d mode=%s alpha=%.3f mask_mode=%s fg_ratio=%.3f fg_density=%.3f"
         % (
             args.backbone_name,
             args.dht_num_tokens,
+            args.dht_mode,
+            args.dht_alpha,
             args.dht_mask_mode,
             args.dht_fg_ratio,
             args.dht_fg_density,
