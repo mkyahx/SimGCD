@@ -30,9 +30,15 @@ class GLSimMaskSourceContractTests(unittest.TestCase):
         self.assertTrue(launcher_path.exists(), "The reproducible launcher is missing.")
         source = launcher_path.read_text(encoding="utf-8")
 
-        self.assertIn('export PYTHONHASHSEED="$seed"', source)
+        self.assertIn("SEED=1", source)
+        self.assertIn('MASK_ROOT="/path/to/tokencut/masks"', source)
+        self.assertIn("CUDA_VISIBLE_DEVICES=0", source)
+        self.assertIn('export PYTHONHASHSEED="$SEED"', source)
         self.assertIn("export CUBLAS_WORKSPACE_CONFIG=:4096:8", source)
-        self.assertIn('python train_glsim_mask_repro.py --seed "$seed" "$@"', source)
+        self.assertIn("python train_glsim_mask_repro.py \\", source)
+        self.assertIn('--seed "$SEED"', source)
+        self.assertIn('--mask_root "$MASK_ROOT"', source)
+        self.assertNotIn('"$@"', source)
 
     def test_model_uses_batched_padding_and_masked_attention(self):
         source = (REPO_ROOT / "glsim_mask_model.py").read_text(encoding="utf-8")
