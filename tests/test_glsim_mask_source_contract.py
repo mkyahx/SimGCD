@@ -6,6 +6,34 @@ REPO_ROOT = pathlib.Path(__file__).resolve().parents[1]
 
 
 class GLSimMaskSourceContractTests(unittest.TestCase):
+    def test_repro_entrypoint_enforces_strict_gpu_and_dataloader_determinism(self):
+        repro_path = REPO_ROOT / "train_glsim_mask_repro.py"
+        self.assertTrue(repro_path.exists(), "The strict reproducibility entrypoint is missing.")
+        source = repro_path.read_text(encoding="utf-8")
+
+        self.assertLess(
+            source.index('os.environ["CUBLAS_WORKSPACE_CONFIG"]'),
+            source.index("import torch"),
+        )
+        self.assertIn('parser.add_argument("--seed", required=True, type=int)', source)
+        self.assertIn("def seed_worker(worker_id):", source)
+        self.assertIn("torch.use_deterministic_algorithms(True)", source)
+        self.assertNotIn("torch.use_deterministic_algorithms(True, warn_only=True)", source)
+        self.assertIn("torch.backends.cudnn.benchmark = False", source)
+        self.assertIn("torch.backends.cuda.matmul.allow_tf32 = False", source)
+        self.assertIn("torch.backends.cudnn.allow_tf32 = False", source)
+        self.assertIn("generator=train_generator", source)
+        self.assertIn("worker_init_fn=seed_worker", source)
+
+    def test_repro_launcher_exports_process_level_seed_configuration(self):
+        launcher_path = REPO_ROOT / "scripts" / "run_glsim_mask_repro.sh"
+        self.assertTrue(launcher_path.exists(), "The reproducible launcher is missing.")
+        source = launcher_path.read_text(encoding="utf-8")
+
+        self.assertIn('export PYTHONHASHSEED="$seed"', source)
+        self.assertIn("export CUBLAS_WORKSPACE_CONFIG=:4096:8", source)
+        self.assertIn('python train_glsim_mask_repro.py --seed "$seed" "$@"', source)
+
     def test_model_uses_batched_padding_and_masked_attention(self):
         source = (REPO_ROOT / "glsim_mask_model.py").read_text(encoding="utf-8")
 
