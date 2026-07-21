@@ -6,6 +6,8 @@ set -x
 # Replace this dummy path once with the shared TokenCut mask root on the cluster.
 SEED=1
 MASK_ROOT="/path/to/tokencut/masks"
+# Leave empty to preserve dynamic-length foreground tokens.
+MAX_FOREGROUND_TOKENS=64
 
 if [[ "$MASK_ROOT" == "/path/to/"* ]]; then
   echo "Set MASK_ROOT in $0 before running." >&2
@@ -14,6 +16,11 @@ fi
 
 export PYTHONHASHSEED="$SEED"
 export CUBLAS_WORKSPACE_CONFIG=:4096:8
+
+K_ARGS=()
+if [[ -n "$MAX_FOREGROUND_TOKENS" ]]; then
+  K_ARGS=(--max_foreground_tokens "$MAX_FOREGROUND_TOKENS")
+fi
 
 CUDA_VISIBLE_DEVICES=0 python train_glsim_mask_repro.py \
     --dataset_name 'cub' \
@@ -33,4 +40,5 @@ CUDA_VISIBLE_DEVICES=0 python train_glsim_mask_repro.py \
     --memax_weight 2 \
     --exp_name cub_glsim_mask_repro \
     --seed "$SEED" \
-    --mask_root "$MASK_ROOT"
+    --mask_root "$MASK_ROOT" \
+    "${K_ARGS[@]}"

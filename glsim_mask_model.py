@@ -34,12 +34,23 @@ class MaskForegroundGLSimModel(nn.Module):
       3. GLSim-style two-CLS fusion before the original SimGCD head.
     """
 
-    def __init__(self, backbone, head, feat_dim=768, fusion_heads=12, min_foreground_tokens=1):
+    def __init__(
+        self,
+        backbone,
+        head,
+        feat_dim=768,
+        fusion_heads=12,
+        min_foreground_tokens=1,
+        max_foreground_tokens=None,
+    ):
         super().__init__()
+        if max_foreground_tokens is not None and max_foreground_tokens < 1:
+            raise ValueError("max_foreground_tokens must be positive when provided.")
         self.backbone = backbone
         self.head = head
         self.feat_dim = feat_dim
         self.min_foreground_tokens = min_foreground_tokens
+        self.max_foreground_tokens = max_foreground_tokens
         self.foreground_cls_token = nn.Parameter(torch.zeros(1, 1, feat_dim))
         self.fusion = TwoCLSFusion(dim=feat_dim, num_heads=fusion_heads)
         self._init_foreground_cls()
@@ -102,6 +113,8 @@ class MaskForegroundGLSimModel(nn.Module):
             effective_mask[too_small] = True
 
         foreground_lengths = effective_mask.sum(dim=1)
+        if self.max_foreground_tokens is not None:
+            foreground_lengths = foreground_lengths.clamp(max=self.max_foreground_tokens)
         max_foreground_length = int(foreground_lengths.max().item())
         batch_size, _, feature_dim = patch_tokens.shape
         packed_tokens = patch_tokens.new_zeros(batch_size, max_foreground_length, feature_dim)
@@ -114,6 +127,14 @@ class MaskForegroundGLSimModel(nn.Module):
 
         for batch_index in range(batch_size):
             selected_tokens = patch_tokens[batch_index][effective_mask[batch_index]]
+            if self.max_foreground_tokens is not None and selected_tokens.shape[0] > self.max_foreground_tokens:
+                uniform_positions = torch.linspace(
+                    0,
+                    selected_tokens.shape[0] - 1,
+                    steps=self.max_foreground_tokens,
+                    device=patch_tokens.device,
+                ).round().to(dtype=torch.long)
+                selected_tokens = selected_tokens.index_select(0, uniform_positions)
             selected_length = selected_tokens.shape[0]
             packed_tokens[batch_index, :selected_length] = selected_tokens
             valid_mask[batch_index, :selected_length] = True

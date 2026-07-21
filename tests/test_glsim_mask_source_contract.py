@@ -24,6 +24,8 @@ class GLSimMaskSourceContractTests(unittest.TestCase):
         self.assertIn("torch.backends.cudnn.allow_tf32 = False", source)
         self.assertIn("generator=train_generator", source)
         self.assertIn("worker_init_fn=seed_worker", source)
+        self.assertIn('parser.add_argument("--max_foreground_tokens", default=None, type=int)', source)
+        self.assertIn("max_foreground_tokens=args.max_foreground_tokens", source)
 
     def test_repro_launcher_exports_process_level_seed_configuration(self):
         launcher_path = REPO_ROOT / "scripts" / "run_glsim_mask_repro.sh"
@@ -32,12 +34,14 @@ class GLSimMaskSourceContractTests(unittest.TestCase):
 
         self.assertIn("SEED=1", source)
         self.assertIn('MASK_ROOT="/path/to/tokencut/masks"', source)
+        self.assertIn("MAX_FOREGROUND_TOKENS=64", source)
         self.assertIn("CUDA_VISIBLE_DEVICES=0", source)
         self.assertIn('export PYTHONHASHSEED="$SEED"', source)
         self.assertIn("export CUBLAS_WORKSPACE_CONFIG=:4096:8", source)
         self.assertIn("python train_glsim_mask_repro.py \\", source)
         self.assertIn('--seed "$SEED"', source)
         self.assertIn('--mask_root "$MASK_ROOT"', source)
+        self.assertIn('--max_foreground_tokens "$MAX_FOREGROUND_TOKENS"', source)
         self.assertNotIn('"$@"', source)
 
     def test_model_uses_batched_padding_and_masked_attention(self):

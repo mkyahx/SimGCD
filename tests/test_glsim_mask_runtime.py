@@ -45,6 +45,29 @@ class BatchedForegroundRuntimeTests(unittest.TestCase):
         self.assertTrue(torch.equal(packed[1, 0], torch.tensor([5.0, 5.0])))
         self.assertTrue(torch.equal(packed[1, 1], torch.zeros(2)))
 
+    def test_packing_caps_foreground_tokens_with_deterministic_uniform_selection(self):
+        capped_model = MaskForegroundGLSimModel(
+            backbone=None,
+            head=nn.Identity(),
+            feat_dim=2,
+            fusion_heads=1,
+            max_foreground_tokens=2,
+        )
+        patch_tokens = torch.tensor(
+            [
+                [[0.0, 0.0], [1.0, 1.0], [2.0, 2.0], [3.0, 3.0], [4.0, 4.0]],
+                [[10.0, 10.0], [11.0, 11.0], [12.0, 12.0], [13.0, 13.0], [14.0, 14.0]],
+            ]
+        )
+        patch_mask = torch.tensor([[True, True, True, True, True], [True, False, True, False, True]])
+
+        packed, valid_mask = capped_model._pack_foreground_tokens(patch_tokens, patch_mask)
+
+        self.assertEqual(tuple(packed.shape), (2, 2, 2))
+        self.assertTrue(torch.equal(valid_mask, torch.ones(2, 2, dtype=torch.bool)))
+        self.assertTrue(torch.equal(packed[0], torch.tensor([[0.0, 0.0], [4.0, 4.0]])))
+        self.assertTrue(torch.equal(packed[1], torch.tensor([[10.0, 10.0], [14.0, 14.0]])))
+
     def test_masked_block_ignores_values_in_padded_positions(self):
         block = _IdentityBlock()
         valid_mask = torch.tensor([[True, True, False]])

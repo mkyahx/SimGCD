@@ -347,6 +347,7 @@ if __name__ == "__main__":
     parser.add_argument('--mask_root', required=True, type=str)
     parser.add_argument("--fusion_heads", default=12, type=int)
     parser.add_argument("--min_foreground_tokens", default=1, type=int)
+    parser.add_argument("--max_foreground_tokens", default=None, type=int)
 
     args = parser.parse_args()
     device = torch.device("cuda:0")
@@ -452,6 +453,7 @@ if __name__ == "__main__":
         feat_dim=args.feat_dim,
         fusion_heads=args.fusion_heads,
         min_foreground_tokens=args.min_foreground_tokens,
+        max_foreground_tokens=args.max_foreground_tokens,
     ).to(device)
 
     train(model, train_loader, None, test_loader_unlabelled, args)
