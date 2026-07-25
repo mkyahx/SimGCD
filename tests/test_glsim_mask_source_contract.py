@@ -6,6 +6,19 @@ REPO_ROOT = pathlib.Path(__file__).resolve().parents[1]
 
 
 class GLSimMaskSourceContractTests(unittest.TestCase):
+    def test_asymmetric_entrypoint_uses_global_first_view_and_masked_second_view(self):
+        model_source = (REPO_ROOT / "asymmetric_mask_model.py").read_text(encoding="utf-8")
+        train_source = (REPO_ROOT / "train_asymmetric_mask_repro.py").read_text(encoding="utf-8")
+
+        self.assertIn("class AsymmetricMaskModel", model_source)
+        self.assertIn("global_cls = self.mask_encoder.backbone(global_images)", model_source)
+        self.assertIn("foreground_cls = self._foreground_features(foreground_images, foreground_patch_mask)", model_source)
+        self.assertIn("return self.head(torch.cat([global_cls, foreground_cls], dim=0))", model_source)
+        self.assertIn("if self.training:", model_source)
+        self.assertIn("return self.head(foreground_cls)", model_source)
+        self.assertIn("student((images[0], images[1], patch_mask[1]))", train_source)
+        self.assertIn("from asymmetric_mask_model import AsymmetricMaskModel", train_source)
+
     def test_repro_entrypoint_enforces_strict_gpu_and_dataloader_determinism(self):
         repro_path = REPO_ROOT / "train_glsim_mask_repro.py"
         self.assertTrue(repro_path.exists(), "The strict reproducibility entrypoint is missing.")

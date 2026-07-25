@@ -3,6 +3,7 @@ import unittest
 import torch
 import torch.nn as nn
 
+from asymmetric_mask_model import AsymmetricMaskModel
 from glsim_mask_model import MaskForegroundGLSimModel
 
 
@@ -22,6 +23,27 @@ class _IdentityBlock(nn.Module):
         self.attn.proj_drop = nn.Identity()
         with torch.no_grad():
             self.attn.qkv.weight.copy_(torch.cat([torch.eye(2), torch.eye(2), torch.eye(2)], dim=0))
+
+
+class _TinyBackbone(nn.Module):
+    def __init__(self):
+        super().__init__()
+        self.cls_token = nn.Parameter(torch.zeros(1, 1, 2))
+        self.pos_embed = nn.Parameter(torch.zeros(1, 5, 2))
+        self.blocks = nn.ModuleList([_IdentityBlock()])
+        self.norm = nn.Identity()
+
+    def forward(self, images):
+        return images
+
+    def prepare_tokens(self, images):
+        offsets = torch.tensor(
+            [[0.0, 0.0], [1.0, 0.0], [0.0, 1.0], [1.0, 1.0]],
+            device=images.device,
+            dtype=images.dtype,
+        )
+        patches = images.unsqueeze(1) + offsets.unsqueeze(0)
+        return torch.cat([self.cls_token.expand(images.shape[0], -1, -1), patches], dim=1)
 
 
 class BatchedForegroundRuntimeTests(unittest.TestCase):
@@ -81,6 +103,25 @@ class BatchedForegroundRuntimeTests(unittest.TestCase):
         self.assertTrue(torch.allclose(output_a[:, :2], output_b[:, :2], atol=1e-6, rtol=0.0))
         self.assertTrue(torch.equal(output_a[:, 2], torch.zeros_like(output_a[:, 2])))
         self.assertTrue(torch.equal(output_b[:, 2], torch.zeros_like(output_b[:, 2])))
+
+    def test_asymmetric_model_uses_foreground_branch_for_evaluation(self):
+        model = AsymmetricMaskModel(
+            backbone=_TinyBackbone(),
+            head=nn.Identity(),
+            feat_dim=2,
+            fusion_heads=1,
+        )
+        global_images = torch.tensor([[1.0, 2.0], [3.0, 4.0]])
+        foreground_images = torch.tensor([[5.0, 6.0], [7.0, 8.0]])
+        foreground_mask = torch.tensor([[True, True, False, False], [True, False, True, False]])
+
+        model.train()
+        train_features = model((global_images, foreground_images, foreground_mask))
+        model.eval()
+        eval_features = model((foreground_images, foreground_mask))
+
+        self.assertTrue(torch.equal(train_features[:2], global_images))
+        self.assertTrue(torch.allclose(train_features[2:], eval_features, atol=1e-6, rtol=0.0))
 
 
 if __name__ == "__main__":
