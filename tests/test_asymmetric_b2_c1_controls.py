@@ -51,3 +51,13 @@ class AsymmetricB2C1ControlTests(unittest.TestCase):
             'runpy.run_module("train_asymmetric_mask_repro", run_name="__main__")',
             source,
         )
+
+    def test_c1_submit_scripts_use_the_benchmark_presets_and_k_128(self):
+        expected = {"cub": "cub", "cars": "scars", "aircraft": "aircraft"}
+        for benchmark, dataset in expected.items():
+            source = (
+                REPO_ROOT / "scripts" / f"submit_asymmetric_c1_{benchmark}_repro.sh"
+            ).read_text(encoding="utf-8")
+            self.assertIn("python train_asymmetric_c1_repro.py", source)
+            self.assertIn(f"--dataset_name '{dataset}'", source)
+            self.assertIn("--max_foreground_tokens 128", source)
