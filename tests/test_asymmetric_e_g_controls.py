@@ -52,17 +52,17 @@ class AsymmetricDirectionalAndInferenceControlTests(unittest.TestCase):
     def test_all_e_and_g_scripts_keep_benchmark_presets_and_k_128(self):
         datasets = {"cub": "cub", "cars": "scars", "aircraft": "aircraft"}
         memax = {"cub": 2, "cars": 1, "aircraft": 1}
-        runner = (REPO_ROOT / "scripts" / "run_asymmetric_variant_repro.sh").read_text(encoding="utf-8")
-        self.assertIn('python "train_asymmetric_${variant}_repro.py"', runner)
-        self.assertIn("--max_foreground_tokens 128", runner)
-        self.assertIn("--mask_root /userhome/cs/mkyahx/SimGCD/masks", runner)
-        self.assertIn("for seed in 0 1 2", runner)
         for variant in ("e2", "e3", "g2", "g3"):
             for benchmark, dataset in datasets.items():
                 script = REPO_ROOT / "scripts" / f"submit_asymmetric_{variant}_{benchmark}_repro.sh"
                 source = script.read_text(encoding="utf-8")
-                self.assertIn("run_asymmetric_variant_repro.sh", source)
-                self.assertIn(f" {variant} {dataset} {memax[benchmark]} ", source)
+                self.assertIn(f"python train_asymmetric_{variant}_repro.py", source)
+                self.assertIn(f"--dataset_name '{dataset}'", source)
+                self.assertIn("--max_foreground_tokens 128", source)
+                self.assertIn("--mask_root /userhome/cs/mkyahx/SimGCD/masks", source)
+                self.assertIn("for seed in 0 1 2", source)
+                self.assertIn(f"--memax_weight {memax[benchmark]}", source)
+                self.assertNotIn("run_asymmetric_variant_repro.sh", source)
 
 
 if __name__ == "__main__":
