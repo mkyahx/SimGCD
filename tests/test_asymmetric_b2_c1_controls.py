@@ -33,3 +33,21 @@ class AsymmetricB2C1ControlTests(unittest.TestCase):
             self.assertIn("python train_asymmetric_b2_repro.py", source)
             self.assertIn(f"--dataset_name '{dataset}'", source)
             self.assertIn("--max_foreground_tokens 128", source)
+
+    def test_c1_uses_a_frozen_dino_cls_buffer_not_a_parameter(self):
+        source = (REPO_ROOT / "asymmetric_c1_mask_model.py").read_text(encoding="utf-8")
+        self.assertIn("self.register_buffer(\"foreground_cls_token\"", source)
+        self.assertIn("backbone.cls_token.detach().clone()", source)
+        self.assertNotIn("nn.Parameter", source)
+        self.assertIn("foreground_cls = self.foreground_cls_token", source)
+
+    def test_c1_entrypoint_patches_only_the_model_class(self):
+        source = (REPO_ROOT / "train_asymmetric_c1_repro.py").read_text(encoding="utf-8")
+        self.assertIn(
+            "asymmetric_mask_model.AsymmetricMaskModel = C1FrozenClsAsymmetricMaskModel",
+            source,
+        )
+        self.assertIn(
+            'runpy.run_module("train_asymmetric_mask_repro", run_name="__main__")',
+            source,
+        )
