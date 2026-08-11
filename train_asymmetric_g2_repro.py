@@ -1,0 +1,8 @@
+import runpy
+
+import asymmetric_mask_model
+from asymmetric_g2_mask_model import GlobalOnlyInferenceAsymmetricMaskModel
+
+
+asymmetric_mask_model.AsymmetricMaskModel = GlobalOnlyInferenceAsymmetricMaskModel
+runpy.run_module("train_asymmetric_mask_repro", run_name="__main__")

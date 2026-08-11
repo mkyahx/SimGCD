@@ -1,0 +1,8 @@
+import runpy
+
+import asymmetric_mask_model
+from asymmetric_g3_mask_model import MeanFeatureInferenceAsymmetricMaskModel
+
+
+asymmetric_mask_model.AsymmetricMaskModel = MeanFeatureInferenceAsymmetricMaskModel
+runpy.run_module("train_asymmetric_mask_repro", run_name="__main__")
