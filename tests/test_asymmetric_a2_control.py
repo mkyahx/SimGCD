@@ -41,6 +41,19 @@ class AsymmetricA2ControlTests(unittest.TestCase):
         self.assertIn("--mask_root /userhome/cs/mkyahx/SimGCD/masks", source)
         self.assertIn("--max_foreground_tokens 128", source)
 
+    def test_a2_cub_submit_script_matches_the_cub_repro_preset(self):
+        script = REPO_ROOT / "scripts" / "submit_asymmetric_a2_cub_repro.sh"
+        self.assertTrue(script.exists(), "Missing CUB A2 submit script.")
+        source = script.read_text(encoding="utf-8")
+
+        self.assertTrue(source.startswith("#!/bin/bash"))
+        self.assertIn("#SBATCH --job-name=asymmetric_a2_cub_repro", source)
+        self.assertIn("python train_asymmetric_a2_repro.py", source)
+        self.assertIn("--dataset_name 'cub'", source)
+        self.assertIn("--memax_weight 2", source)
+        self.assertIn("--mask_root /userhome/cs/mkyahx/SimGCD/masks", source)
+        self.assertIn("--max_foreground_tokens 64", source)
+
 
 if __name__ == "__main__":
     unittest.main()
