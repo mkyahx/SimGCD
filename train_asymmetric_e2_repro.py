@@ -1,8 +1,11 @@
 import runpy
 
+import asymmetric_mask_model
 import model
+from asymmetric_c1_mask_model import C1FrozenClsAsymmetricMaskModel
 from directional_distill_loss import GlobalToForegroundDistillLoss
 
 
+asymmetric_mask_model.AsymmetricMaskModel = C1FrozenClsAsymmetricMaskModel
 model.DistillLoss = GlobalToForegroundDistillLoss
 runpy.run_module("train_asymmetric_mask_repro", run_name="__main__")

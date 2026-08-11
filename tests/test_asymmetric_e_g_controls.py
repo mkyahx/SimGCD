@@ -24,16 +24,25 @@ class AsymmetricDirectionalAndInferenceControlTests(unittest.TestCase):
         for variant, loss_class in expected.items():
             source = (REPO_ROOT / f"train_asymmetric_{variant}_repro.py").read_text(encoding="utf-8")
             self.assertIn(f"model.DistillLoss = {loss_class}", source)
+            self.assertIn("from asymmetric_c1_mask_model import C1FrozenClsAsymmetricMaskModel", source)
+            self.assertIn(
+                "asymmetric_mask_model.AsymmetricMaskModel = C1FrozenClsAsymmetricMaskModel",
+                source,
+            )
             self.assertIn('runpy.run_module("train_asymmetric_mask_repro", run_name="__main__")', source)
 
     def test_g2_and_g3_preserve_training_and_change_only_eval_features(self):
         g2_source = (REPO_ROOT / "asymmetric_g2_mask_model.py").read_text(encoding="utf-8")
+        self.assertIn("from asymmetric_c1_mask_model import C1FrozenClsAsymmetricMaskModel", g2_source)
+        self.assertIn("class GlobalOnlyInferenceAsymmetricMaskModel(C1FrozenClsAsymmetricMaskModel)", g2_source)
         self.assertIn("if self.training:", g2_source)
         self.assertIn("return super().forward(inputs)", g2_source)
         self.assertIn("global_cls = self.mask_encoder.backbone(images)", g2_source)
         self.assertIn("return self.head(global_cls)", g2_source)
 
         g3_source = (REPO_ROOT / "asymmetric_g3_mask_model.py").read_text(encoding="utf-8")
+        self.assertIn("from asymmetric_c1_mask_model import C1FrozenClsAsymmetricMaskModel", g3_source)
+        self.assertIn("class MeanFeatureInferenceAsymmetricMaskModel(C1FrozenClsAsymmetricMaskModel)", g3_source)
         self.assertIn("if self.training:", g3_source)
         self.assertIn("return super().forward(inputs)", g3_source)
         self.assertIn("foreground_cls = self._foreground_features(images, patch_mask)", g3_source)

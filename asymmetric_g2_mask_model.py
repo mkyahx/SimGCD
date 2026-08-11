@@ -1,7 +1,7 @@
-from asymmetric_mask_model import AsymmetricMaskModel
+from asymmetric_c1_mask_model import C1FrozenClsAsymmetricMaskModel
 
 
-class GlobalOnlyInferenceAsymmetricMaskModel(AsymmetricMaskModel):
+class GlobalOnlyInferenceAsymmetricMaskModel(C1FrozenClsAsymmetricMaskModel):
     """Keep asymmetric training but classify with the global CLS at evaluation."""
 
     def forward(self, inputs):

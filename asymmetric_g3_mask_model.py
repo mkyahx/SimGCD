@@ -1,7 +1,7 @@
-from asymmetric_mask_model import AsymmetricMaskModel
+from asymmetric_c1_mask_model import C1FrozenClsAsymmetricMaskModel
 
 
-class MeanFeatureInferenceAsymmetricMaskModel(AsymmetricMaskModel):
+class MeanFeatureInferenceAsymmetricMaskModel(C1FrozenClsAsymmetricMaskModel):
     """Keep asymmetric training and average global/foreground CLS before the head."""
 
     def forward(self, inputs):
