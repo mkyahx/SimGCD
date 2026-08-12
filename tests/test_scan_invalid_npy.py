@@ -28,15 +28,16 @@ class ScanInvalidNpyTests(unittest.TestCase):
             broken_path = nested / "broken.npy"
             broken_path.write_bytes(b"not-a-numpy-file")
 
-            invalid_files = module.scan_invalid_npy_files(root)
+            valid_count, invalid_files = module.scan_invalid_npy_files(root)
 
+        self.assertEqual(valid_count, 1)
         self.assertEqual([path.name for path, _ in invalid_files], ["broken.npy"])
         self.assertTrue(invalid_files[0][1])
 
     def test_empty_root_has_no_invalid_files(self):
         module = load_script_module()
         with tempfile.TemporaryDirectory() as temp_dir:
-            self.assertEqual(module.scan_invalid_npy_files(Path(temp_dir)), [])
+            self.assertEqual(module.scan_invalid_npy_files(Path(temp_dir)), (0, []))
 
 
 if __name__ == "__main__":
